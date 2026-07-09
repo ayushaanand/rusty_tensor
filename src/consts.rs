@@ -1,9 +1,11 @@
 /// Represents a single dimension value (max 255 per axis).
+/// If testing, make sure to update PY_DIM_TYPE below.
 pub type DimType = u8;
 /// Zero-value sentinel for `DimType`.
 pub const DIM_ZERO: DimType = 0 as DimType;
 
 /// Represents flat memory positions, strides, and element counts.
+/// If testing, make sure to update PY_SIZE_TYPE below.
 pub type SizeType = u64;
 /// Zero-value sentinel for `SizeType`.
 pub const SIZE_ZERO: SizeType = 0 as SizeType;
@@ -31,3 +33,11 @@ use std::rc::Rc;
 ///
 /// Use `.borrow()` for read access and `.borrow_mut()` for write access.
 pub type SharedTensor<T> = Rc<RefCell<Tensor<T>>>;
+
+#[cfg(feature = "python-testing")]
+#[pyo3::pymodule(name="consts")]
+#[allow(dead_code)]
+pub mod consts_tests {
+    #[pymodule_export] const PY_DIM_TYPE: &str = "uint8";
+    #[pymodule_export] const PY_SIZE_TYPE: &str = "uint64";
+}

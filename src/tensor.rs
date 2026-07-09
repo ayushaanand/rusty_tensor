@@ -6,77 +6,79 @@ use std::rc::Rc;
 
 /// Type-erased metadata describing a tensor's memory layout.
 ///
-/// Contains only the shape, stride, offset, and element count — no data or type information.
-/// This allows the [`Odometer`](crate::odometer::Odometer) to iterate over tensors of
-/// different element types without requiring a generic `T` parameter.
+/// Contains only the shape, stride, offset, etc. — no data or type
+/// information. This allows specific TensorDType agnostic methods like broadcasting.
 #[derive(Debug)]
-pub(crate) struct TensorMeta {
+pub struct TensorMeta {
     pub(crate) shape: Vec<DimType>,
+    /// `stride` is 0, whenever `shape` is 1
     pub(crate) stride: Vec<SizeType>,
     pub(crate) offset: SizeType,
     pub(crate) total_elems: SizeType,
 }
 
-/// A multi-dimensional tensor backed by a flat contiguous `Vec<T>`.
+/// A multi-dimensional strided tensor backed by a `Vec<T>`.
 ///
-/// All fields are `pub(crate)` — external users cannot access them directly.
-/// Use public getter methods for read access.
+/// Composed of a [`TensorMeta`] (shape, stride, offset, total_elems) and a
+/// `data: Vec<T>` holding the actual elements. All fields are `pub(crate)`.
 ///
-/// # Stride Convention
-/// - Strides are computed in row-major (C-contiguous) order.
-/// - Broadcast dimensions (`shape[i] == 1`) have `stride[i] == 0`,
-///   causing the Odometer to repeatedly read the same position along that axis.
-///
-/// # Ownership
-/// All constructors return `SharedTensor<T>` (`Rc<RefCell<Tensor<T>>>`).
-/// The tensor is always heap-allocated and reference-counted.
+/// # Constructor
+/// [`new`](Tensor::new) return [`SharedTensor<T>`](crate::consts::SharedTensor).
+/// The tensor is always heap-allocated and reference-counted
+/// for backward grad purposes.
 #[derive(Debug)]
-pub(crate) struct Tensor<T: TensorDType> {
-    // Basic Variables
+pub struct Tensor<T: TensorDType> {
     pub(crate) meta: TensorMeta,
     pub(crate) data: Vec<T>,
 }
 
 impl<T: TensorDType> Tensor<T> {
-    /// Creates a new tensor filled with `def_val` and wraps it in a `SharedTensor<T>`.
+    /// Creates a new tensor filled with `def_val` and wraps it in a [`SharedTensor<T>`](SharedTensor).
+    ///
+    /// Strides are computed in row-major (C-contiguous) order. Dimensions with
+    /// `shape[i] == 1` get `stride[i] == 0` to enable transparent broadcasting.
     ///
     /// # Arguments
-    /// * `shape` - Dimensions of the tensor (e.g., `vec![3, 2, 1]`). Ownership is moved
-    ///   into the struct.
+    /// * `shape` - Dimensions of the tensor (e.g., `vec![3, 2, 1]`). Ownership is
+    ///   moved into the struct.
     /// * `def_val` - The value to fill every element with (equivalent to `torch.full()`).
     ///
     /// # Returns
-    /// `SharedTensor<T>` — an `Rc<RefCell<Tensor<T>>>` wrapping the newly created tensor.
-    pub fn new(shape: Vec<DimType>, def_val: T) -> SharedTensor<T> {
-        let mut elems: SizeType = 1;
-
-        let mut stride: Vec<SizeType> = shape
-            .iter()
-            .rev()
-            .map(|&s| {
-                let curr_stride = if s == 1 { SIZE_ZERO } else { elems };
-                elems *= s as SizeType;
-                curr_stride
-            })
-            .collect();
-
-        stride.reverse();
+    /// [`SharedTensor<T>`](SharedTensor<T>) — an `Rc<RefCell<Tensor<T>>>` wrapping the newly created tensor.
+    pub fn new(shape: &[DimType], def_val: T) -> SharedTensor<T> {
+        let (stride, total_elems) = Self::compute_strides(shape);
 
         let new_tensor = Tensor {
             meta: TensorMeta {
-                shape,
+                shape: Vec::from(shape),
                 stride,
-                total_elems: elems,
+                total_elems,
                 offset: SIZE_ZERO,
             },
-            data: vec![def_val; elems as usize],
+            data: vec![def_val; total_elems as usize],
         };
 
         Rc::new(RefCell::new(new_tensor))
     }
 
+    fn compute_strides(shape: &[DimType]) -> (Vec<SizeType>, SizeType) {
+        let mut stride: Vec<SizeType> = vec![SIZE_ZERO; shape.len()];
+        
+        if shape.contains(&DIM_ZERO) {
+            return (stride, SIZE_ZERO);
+        }
+
+        let mut elems: SizeType = 1;
+        for (sh, st) in shape.iter().rev().zip(stride.iter_mut().rev()) {
+            *st = if *sh == 1 { SIZE_ZERO } else { elems };
+            elems *= *sh as SizeType;
+        }
+
+        (stride, elems)
+    }
+
     /// Returns the number of dimensions (rank) of this tensor.
-    pub fn dim(&self) -> DimType {
+    pub fn rank(&self) -> DimType {
         self.meta.shape.len() as DimType
     }
 
@@ -100,33 +102,21 @@ impl<T: TensorDType> Tensor<T> {
         self.data[idx as usize]
     }
 
-    /// Returns an immutable reference to this tensor's metadata.
-    ///
-    /// # Borrow Guidelines
-    /// When passing the result to an [`Odometer`](crate::odometer::Odometer),
-    /// the `RefCell` borrow guard must be bound to a `let` variable so that
-    /// the `TensorMeta` reference outlives the Odometer:
-    ///
-    /// ```rust
-    /// let t1_borrow = t1.borrow();           // guard lives until end of scope
-    /// let meta = t1_borrow.get_meta();       // reference borrows from guard
-    /// let odo = Odometer::new([meta], 0);    // meta outlives odo ✓
-    /// ```
-    ///
-    /// This will **not** compile:
-    /// ```rust,compile_fail
-    /// let odo = Odometer::new([t1.borrow().get_meta()], 0);  // guard drops immediately ✗
-    /// ```
+    /// Returns an immutable reference to this tensor's [`TensorMeta`].
     pub fn get_meta(&self) -> &TensorMeta {
         &self.meta
     }
+}
 
-    /// Returns a mutable reference to this tensor's metadata.
-    ///
-    /// # Safety Note
-    /// Modifying `shape` without recalculating `stride` and `total_elems`
-    /// will corrupt the tensor's memory layout.
-    pub fn get_meta_mut(&mut self) -> &mut TensorMeta {
-        &mut self.meta
+#[cfg(feature = "python-testing")]
+#[pyo3::pymodule(name = "tensor")]
+pub mod tensor_tests {
+    use super::*;
+    use pyo3::prelude::*;
+
+    #[pyfunction]
+    fn test_compute_strides(shape: Vec<DimType>) -> Vec<SizeType> {
+        let (stride, _) = Tensor::<i32>::compute_strides(&shape);
+        stride
     }
 }
