@@ -1,7 +1,6 @@
 use crate::consts::*;
 use crate::tensor::TensorMeta;
 use std::array;
-use std::iter::zip;
 
 /// Multi-tensor iterator that walks through a multi-dimensional index space
 /// and yields flat memory positions for each tensor argument at every step.
@@ -131,39 +130,31 @@ impl<'a, const COUNT: usize> Iterator for Odometer<'a, COUNT> {
 
         let res = self.pos.clone();
 
-        let mut iters: [_; COUNT] = self.args.map(|m| {
-            let avb_rank = m.shape.len().saturating_sub(self.skip_ranks);
-            m.shape[..avb_rank].iter().rev()
-        });
-
-        // let avb_rank = self.args[0].shape.len().saturating_sub(self.skip_ranks);
-        // self.idx.
-        //     iter_mut().rev().map(|i| { *i += 1; i} ).
-        //     zip(self.args[0].shape[..avb_rank].iter().rev()).
-        //     take_while(|(i, s)| {*i == *s}).collect();
-
         let out_rank = self.out_shape.len();
         if out_rank == 0 {self.done = true;}
 
         for curr_depth in self.skip_ranks..out_rank {
             let d = out_rank - curr_depth - 1;
-            self.idx[d] += 1;
+            let mut is_overflow = true;
 
-            let is_overflow = self.idx[d] == self.out_shape[d];
-        
-            self.pos
-                .iter_mut()
-                .zip(self.args.iter())
-                .for_each(|(p, m)| {
-                    if curr_depth < m.shape.len() {
-                        let i = m.shape.len() - curr_depth - 1;
-                        if is_overflow {
-                            *p -= (m.shape[i] as SizeType - 1) * m.stride[i]
-                        } else {
-                            *p += m.stride[i]
+            if self.out_shape[d] != 0 {
+                self.idx[d] += 1;
+                if self.idx[d] != self.out_shape[d] { is_overflow = false }
+
+                self.pos
+                    .iter_mut()
+                    .zip(self.args.iter())
+                    .for_each(|(p, m)| {
+                        if curr_depth < m.shape.len() {
+                            let i = m.shape.len() - curr_depth - 1;
+                            if is_overflow {
+                                *p -= (m.shape[i] as SizeType - 1) * m.stride[i]
+                            } else {
+                                *p += m.stride[i]
+                            }
                         }
-                    }
-                });
+                    });
+            }
 
             if !is_overflow {
                 break;

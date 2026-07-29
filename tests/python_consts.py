@@ -9,5 +9,3 @@ dim_min = __dim_info.min
 
 size_max = __size_info.max
 size_min = __size_info.min
-
-print(dim_max)

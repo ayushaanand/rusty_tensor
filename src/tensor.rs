@@ -4,17 +4,40 @@ use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;
 
+use smallvec::{smallvec, SmallVec};
+
 /// Type-erased metadata describing a tensor's memory layout.
 ///
 /// Contains only the shape, stride, offset, etc. — no data or type
 /// information. This allows specific TensorDType agnostic methods like broadcasting.
 #[derive(Debug)]
 pub struct TensorMeta {
-    pub(crate) shape: Vec<DimType>,
-    /// `stride` is 0, whenever `shape` is 1
-    pub(crate) stride: Vec<SizeType>,
+    pub(crate) shape: SmallDimVec,
+    pub(crate) stride: SmallSizeVec,
     pub(crate) offset: SizeType,
     pub(crate) total_elems: SizeType,
+}
+
+impl TensorMeta {
+    pub fn new(shape: SmallDimVec) -> Self {
+        let mut res = TensorMeta {
+            stride: smallvec![SIZE_ZERO; shape.len()],
+            shape: SmallVec::from(shape),
+            offset: SIZE_ZERO,
+            total_elems: 1
+        };
+
+        if res.shape.contains(&DIM_ZERO) {
+            return res;
+        }
+
+        for (sh, st) in res.shape.iter().rev().zip(res.stride.iter_mut().rev()) {
+            *st = res.total_elems;
+            res.total_elems *= *sh as SizeType;
+        }
+
+        res
+    }
 }
 
 /// A multi-dimensional strided tensor backed by a `Vec<T>`.
@@ -43,38 +66,17 @@ impl<T: TensorDType> Tensor<T> {
     ///   moved into the struct.
     /// * `def_val` - The value to fill every element with (equivalent to `torch.full()`).
     ///
-    /// # Returns
+    ///  # Returns
     /// [`SharedTensor<T>`](SharedTensor<T>) — an `Rc<RefCell<Tensor<T>>>` wrapping the newly created tensor.
-    pub fn new(shape: &[DimType], def_val: T) -> SharedTensor<T> {
-        let (stride, total_elems) = Self::compute_strides(shape);
+    pub fn new(shape: SmallVec<[DimType; 8]>, def_val: T) -> SharedTensor<T> {
+        let new_meta = TensorMeta::new(shape);
 
         let new_tensor = Tensor {
-            meta: TensorMeta {
-                shape: Vec::from(shape),
-                stride,
-                total_elems,
-                offset: SIZE_ZERO,
-            },
-            data: vec![def_val; total_elems as usize],
+            data: vec![def_val; new_meta.total_elems as usize],
+            meta: new_meta,
         };
 
         Rc::new(RefCell::new(new_tensor))
-    }
-
-    fn compute_strides(shape: &[DimType]) -> (Vec<SizeType>, SizeType) {
-        let mut stride: Vec<SizeType> = vec![SIZE_ZERO; shape.len()];
-        
-        if shape.contains(&DIM_ZERO) {
-            return (stride, SIZE_ZERO);
-        }
-
-        let mut elems: SizeType = 1;
-        for (sh, st) in shape.iter().rev().zip(stride.iter_mut().rev()) {
-            *st = if *sh == 1 { SIZE_ZERO } else { elems };
-            elems *= *sh as SizeType;
-        }
-
-        (stride, elems)
     }
 
     /// Returns the number of dimensions (rank) of this tensor.
@@ -110,13 +112,13 @@ impl<T: TensorDType> Tensor<T> {
 
 #[cfg(feature = "python-testing")]
 #[pyo3::pymodule(name = "tensor")]
-pub mod tensor_tests {
+pub(crate) mod py_tests {
     use super::*;
     use pyo3::prelude::*;
 
-    #[pyfunction]
-    fn test_compute_strides(shape: Vec<DimType>) -> Vec<SizeType> {
-        let (stride, _) = Tensor::<i32>::compute_strides(&shape);
-        stride
+    #[pyfunction(name= "compute_strides")]
+    fn py_test_compute_strides(shape: Vec<DimType>) -> Vec<SizeType> {
+        let res = TensorMeta::new(SmallDimVec::from(shape));
+        res.stride.to_vec()
     }
 }
