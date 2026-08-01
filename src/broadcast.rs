@@ -31,21 +31,21 @@ use smallvec::{smallvec, SmallVec};
 ///   for the caller to fill.
 /// * `None` — if `COUNT == 0`, or if `max_rank < skip_ranks`, or if any two
 ///   tensors have incompatible dimensions (neither is `1` and they differ).
-pub fn compute_broadcast_shape_const<const COUNT: usize>(args: [&[DimType]; COUNT], skip_ranks: usize) -> Option<SmallDimVec> {
+pub fn compute_broadcast_shape_const<const COUNT: usize>(args: [&[DimType]; COUNT], skip_dims: usize) -> Option<SmallDimVec> {
     if COUNT == 0 { return None; };
 
     let max_rank = args.iter().map(|&m| m.len()).max().unwrap_or(0);
-    if max_rank < skip_ranks { return None; }
+    if max_rank < skip_dims { return None; }
     let mut res: SmallDimVec = smallvec![1; max_rank];
 
     // make rev iters on valid slices of args
     let mut iters: [_; COUNT] = args.map(|m| {
-        let avb_rank = m.len().saturating_sub(skip_ranks);
+        let avb_rank = m.len().saturating_sub(skip_dims);
         m[..avb_rank].iter().rev()
     });
 
     // make rev iter on valid slice of res
-    let avb_res_rank = max_rank.saturating_sub(skip_ranks);
+    let avb_res_rank = max_rank.saturating_sub(skip_dims);
     let res_iter = res[..avb_res_rank].iter_mut().rev();
 
     for res_dim in res_iter {
@@ -63,19 +63,19 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(args: [&[DimType]; COUN
     Some(res)
 }
 
-pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_ranks: usize) -> Option<SmallDimVec>
+pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_dims: usize) -> Option<SmallDimVec>
 where
     I: Iterator<Item = &'a [DimType]> + Clone
 {
     if args_iter.clone().next() == None { return None; };
 
     let max_rank = args_iter.clone().map(|a| a.len()).max().unwrap_or(0);
-    if max_rank < skip_ranks { return None; }
+    if max_rank < skip_dims { return None; }
     let mut res: SmallDimVec = smallvec![1; max_rank];
 
-    let avb_rank = max_rank.saturating_sub(skip_ranks);
+    let avb_rank = max_rank.saturating_sub(skip_dims);
     let res_it = res[..avb_rank].iter_mut().rev();
-    let mut curr_depth = skip_ranks;
+    let mut curr_depth = skip_dims;
 
     for curr_dim in res_it {
         for arg in args_iter.clone() {
@@ -94,8 +94,8 @@ where
 
     Some(res)
 }
-pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(args: &[S], skip_ranks: usize) -> Option<SmallDimVec> {
-    compute_broadcast_shape_iter(args.iter().map(|s| s.as_ref()), skip_ranks)
+pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(args: &[S], skip_dims: usize) -> Option<SmallDimVec> {
+    compute_broadcast_shape_iter(args.iter().map(|s| s.as_ref()), skip_dims)
 }
 
 #[cfg(feature = "python-testing")]
