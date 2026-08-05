@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 /// Type-erased metadata describing a tensor's memory layout.
 ///
@@ -19,15 +19,16 @@ pub struct TensorMeta {
 }
 
 impl TensorMeta {
-    pub fn new(shape: SmallDimVec) -> Self {
+    pub fn new(shape: &[DimType]) -> Self {
         let mut res = TensorMeta {
             stride: smallvec![SIZE_ZERO; shape.len()],
             shape: SmallVec::from(shape),
             offset: SIZE_ZERO,
-            total_elems: 1
+            total_elems: 1,
         };
 
         if res.shape.contains(&DIM_ZERO) {
+            res.total_elems = SIZE_ZERO;
             return res;
         }
 
@@ -69,7 +70,7 @@ impl<T: TensorDType> Tensor<T> {
     ///  # Returns
     /// [`SharedTensor<T>`](SharedTensor<T>) — an `Rc<RefCell<Tensor<T>>>` wrapping the newly created tensor.
     pub fn new(shape: SmallVec<[DimType; 8]>, def_val: T) -> SharedTensor<T> {
-        let new_meta = TensorMeta::new(shape);
+        let new_meta = TensorMeta::new(&shape);
 
         let new_tensor = Tensor {
             data: vec![def_val; new_meta.total_elems as usize],
@@ -116,9 +117,9 @@ pub(crate) mod py_tests {
     use super::*;
     use pyo3::prelude::*;
 
-    #[pyfunction(name= "compute_strides")]
+    #[pyfunction(name = "compute_strides")]
     fn py_test_compute_strides(shape: Vec<DimType>) -> Vec<SizeType> {
-        let res = TensorMeta::new(SmallDimVec::from(shape));
+        let res = TensorMeta::new(&SmallDimVec::from(shape));
         res.stride.to_vec()
     }
 }

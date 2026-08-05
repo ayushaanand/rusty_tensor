@@ -1,9 +1,24 @@
+#![cfg_attr(test, allow(dead_code))]
 pub mod broadcast;
 pub(crate) mod consts;
-pub mod math;
+// pub mod math;
+mod new_odometer;
 pub mod odometer;
 pub mod tensor;
-mod new_odometer;
+
+#[macro_export]
+macro_rules! make_args {
+    ($($arg:tt),*) => {
+        {
+            use crate::consts::SmallDimVec;
+            #[allow(unused_imports)]
+            use smallvec::smallvec;
+            
+            let new_args: [SmallDimVec; _] = [$(smallvec!$arg),*];
+            new_args
+        }
+    };
+}
 
 #[cfg(feature = "python-testing")]
 #[pyo3::pymodule]

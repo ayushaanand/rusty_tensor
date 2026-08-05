@@ -65,7 +65,11 @@ impl<'a, const COUNT: usize> Odometer<'a, COUNT> {
     /// # Returns
     /// * `Some(Odometer)` — if all tensors have rank ≥ `skip_ranks`.
     /// * `None` — if any tensor has fewer dimensions than `skip_ranks`.
-    pub fn new(out_shape: &'a Vec<DimType>, args: [&'a TensorMeta; COUNT], skip_ranks: usize) -> Option<Self> {
+    pub fn new(
+        out_shape: &'a Vec<DimType>,
+        args: [&'a TensorMeta; COUNT],
+        skip_ranks: usize,
+    ) -> Option<Self> {
         if args.iter().any(|&m| m.shape.len() < skip_ranks) {
             None
         } else {
@@ -83,7 +87,11 @@ impl<'a, const COUNT: usize> Odometer<'a, COUNT> {
     /// A new `Odometer` with `idx` zeroed to length
     /// `args[0].shape.len() - skip_ranks`, `pos` initialized to each tensor's
     /// `offset`, and `done` set to `false`.
-    pub(crate) fn new_unsafe(out_shape: &'a Vec<DimType>, args: [&'a TensorMeta; COUNT], skip_ranks: usize) -> Self {
+    pub(crate) fn new_unsafe(
+        out_shape: &'a Vec<DimType>,
+        args: [&'a TensorMeta; COUNT],
+        skip_ranks: usize,
+    ) -> Self {
         let out_rank = out_shape.len();
         Odometer {
             out_shape,
@@ -98,13 +106,11 @@ impl<'a, const COUNT: usize> Odometer<'a, COUNT> {
     /// Resets the Odometer to its initial state for re-iteration.
     pub fn reset(&mut self) {
         self.done = false;
-        self.idx
-            .iter_mut()
-            .for_each(|i| *i = 0);
+        self.idx.iter_mut().for_each(|i| *i = 0);
         self.pos
             .iter_mut()
             .zip(self.args.iter())
-            .for_each(|(p, m)| {*p = m.offset});
+            .for_each(|(p, m)| *p = m.offset);
     }
 }
 
@@ -131,7 +137,9 @@ impl<'a, const COUNT: usize> Iterator for Odometer<'a, COUNT> {
         let res = self.pos.clone();
 
         let out_rank = self.out_shape.len();
-        if out_rank == 0 {self.done = true;}
+        if out_rank == 0 {
+            self.done = true;
+        }
 
         for curr_depth in self.skip_ranks..out_rank {
             let d = out_rank - curr_depth - 1;
@@ -139,7 +147,9 @@ impl<'a, const COUNT: usize> Iterator for Odometer<'a, COUNT> {
 
             if self.out_shape[d] != 0 {
                 self.idx[d] += 1;
-                if self.idx[d] != self.out_shape[d] { is_overflow = false }
+                if self.idx[d] != self.out_shape[d] {
+                    is_overflow = false
+                }
 
                 self.pos
                     .iter_mut()

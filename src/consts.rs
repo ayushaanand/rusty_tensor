@@ -39,9 +39,11 @@ use std::rc::Rc;
 pub type SharedTensor<T> = Rc<RefCell<Tensor<T>>>;
 
 #[cfg(feature = "python-testing")]
-#[pyo3::pymodule(name="consts")]
+#[pyo3::pymodule(name = "consts")]
 #[allow(dead_code)]
 pub mod py_tests {
-    #[pymodule_export] const PY_DIM_TYPE: &str = "uint8";
-    #[pymodule_export] const PY_SIZE_TYPE: &str = "uint64";
+    #[pymodule_export]
+    const PY_DIM_TYPE: &str = "uint8";
+    #[pymodule_export]
+    const PY_SIZE_TYPE: &str = "uint64";
 }
