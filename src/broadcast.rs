@@ -14,10 +14,6 @@ use smallvec::smallvec;
 /// responsible for filling those positions with the correct values (e.g., the
 /// matmul result dimensions `M` and `N`).
 ///
-/// The same `skip_ranks` value must be passed to
-/// [`Odometer::new`](crate::odometer::Odometer::new) so that the Odometer
-/// iterates only the outer (batch) dimensions that were broadcast-checked here.
-///
 /// # Arguments
 /// * `args` - Fixed-size array of [`&TensorMeta`](TensorMeta) references.
 /// * `skip_ranks` - Number of innermost dimensions to exclude from broadcasting.

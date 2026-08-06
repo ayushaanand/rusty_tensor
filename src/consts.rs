@@ -9,7 +9,7 @@ pub type SmallDimVec = smallvec::SmallVec<[DimType; SMALL_SIZE]>;
 
 /// Represents flat memory positions, strides, and element counts.
 /// If testing, make sure to update PY_SIZE_TYPE below.
-pub type SizeType = u64;
+pub type SizeType = usize;
 /// Zero-value sentinel for `SizeType`.
 pub const SIZE_ZERO: SizeType = 0 as SizeType;
 pub type SmallSizeVec = smallvec::SmallVec<[SizeType; SMALL_SIZE]>;

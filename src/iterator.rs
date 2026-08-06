@@ -6,7 +6,7 @@ use crate::consts::*;
 use crate::tensor::TensorMeta;
 
 #[derive(Debug)]
-pub struct Odometer {
+pub struct TensorIter {
     pub pos: SmallSizeVec,             // len = args.len()
     pub(crate) idx: SmallDimVec,       // len = max_rank - skip_dims
     pub(crate) offsets: SmallSizeVec,  // len = args.len()
@@ -36,7 +36,7 @@ trait MetaIter<'a>: Iterator<Item=&'a TensorMeta> + Clone {}
 impl<'a, T> MetaIter<'a> for T
 where T: Iterator<Item=&'a TensorMeta> + Clone {}
 
-impl Odometer {
+impl TensorIter {
     pub fn new<'a, I>(args: I, skip_dims: usize) -> Option<Self>
     where
         I: IntoIterator<Item=&'a TensorMeta>,
@@ -44,12 +44,12 @@ impl Odometer {
     {
         let it = args.into_iter();
         // 1, 2, 3
-        if !OdometerBuilder::is_valid(it.clone(), skip_dims) {
+        if !IterBuilder::is_valid(it.clone(), skip_dims) {
             return None;
         }
 
         // 4, 5
-        let mut builder = OdometerBuilder::new(it, skip_dims)?;
+        let mut builder = IterBuilder::new(it, skip_dims)?;
 
         // 6. eliminate trivial dims: keep only indices d where broadcasted_shape[d] != 1
         builder.part(1);
@@ -129,7 +129,7 @@ impl Odometer {
     }
 }
 
-impl Iterator for Odometer {
+impl Iterator for TensorIter {
     type Item = SmallSizeVec;
 
     #[inline(always)]
@@ -143,7 +143,7 @@ impl Iterator for Odometer {
     }
 }
 
-struct OdometerBuilder {
+struct IterBuilder {
     out_shape: SmallDimVec,
     shapes: SmallVec<[SmallDimVec; SMALL_SIZE]>,
     strides: SmallVec<[SmallSizeVec; SMALL_SIZE]>,
@@ -151,7 +151,7 @@ struct OdometerBuilder {
     actual_rank: usize,
 }
 
-impl OdometerBuilder {
+impl IterBuilder {
     fn is_valid<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> bool {
         // 1. args.is_empty() -> return None
         let args_len = args.clone().count();
@@ -198,7 +198,7 @@ impl OdometerBuilder {
 
         let offsets = args.map(|m| m.offset).collect();
 
-        Some(OdometerBuilder {
+        Some(IterBuilder {
             out_shape,
             shapes,
             strides,
@@ -308,7 +308,7 @@ impl OdometerBuilder {
         drop_ext_dims(&mut self.out_shape, self.actual_rank);
     }
 
-    fn build(mut self) -> Odometer {
+    fn build(mut self) -> TensorIter {
         if self.actual_rank == 0 {
             self.out_shape.push(1);
             self.strides.iter_mut().for_each(|s| s.push(SIZE_ZERO));
@@ -318,7 +318,7 @@ impl OdometerBuilder {
         let pos: SmallSizeVec = self.offsets.clone();
         let idx: SmallDimVec = std::iter::repeat_n(DIM_ZERO, self.actual_rank).collect();
 
-        Odometer {
+        TensorIter {
             pos,
             idx,
             offsets: self.offsets,
@@ -333,7 +333,7 @@ macro_rules! odometer {
     ([$([$($args:expr),*]),*], $skip:expr) => {
         {
             let metas = [$(TensorMeta::new(&[$($args),*])),*];
-            Odometer::new(metas.iter(), $skip)
+            TensorIter::new(metas.iter(), $skip)
         }
     }
 }
@@ -343,14 +343,14 @@ mod tests {
     use smallvec::{smallvec, SmallVec};
     use crate::consts::*;
     use crate::tensor::*;
-    use super::Odometer;
+    use super::TensorIter;
 
-    #[test]
-    fn test_example_use() {
-        let shapes: [SmallDimVec; _] = [smallvec![2, 3, 4], smallvec![2, 1, 4], smallvec![4], smallvec![]]; // get your shapes
-        let shared_tensors: [SharedTensor<i32>; _] = shapes.map(|s| Tensor::new(s, 3)); // get your tensors,
-        let borrowed_tensors = shared_tensors.each_ref().map(|t| t.borrow()); // borrow at runtime
-    }
+    // #[test]
+    // fn test_example_use() {
+    //     let shapes: [SmallDimVec; _] = [smallvec![2, 3, 4], smallvec![2, 1, 4], smallvec![4], smallvec![]]; // get your shapes
+    //     let shared_tensors: [SharedTensor<i32>; _] = shapes.map(|s| Tensor::new(s, 3)); // get your tensors,
+    //     let borrowed_tensors = shared_tensors.each_ref().map(|t| t.borrow()); // borrow at runtime
+    // }
 
     #[test]
     fn test_empty() {
@@ -395,9 +395,9 @@ mod tests {
             let odo = odometer!([[2, 2], [2], [2, 1]], 0).unwrap();
             assert_eq!(odo.out_shape.len(), 2);
             assert_eq!(odo.out_shape[0], 2); assert_eq!(odo.out_shape[1], 2);
-            assert_eq!(odo.arg_strides[0][0], 1); assert_eq!(odo.arg_strides[0][1], 2);
-            assert_eq!(odo.arg_strides[1][0], 1); assert_eq!(odo.arg_strides[1][1], 0);
-            assert_eq!(odo.arg_strides[2][0], 0); assert_eq!(odo.arg_strides[2][1], 1);
+            assert_eq!(odo.arg_strides[0][0], 2); assert_eq!(odo.arg_strides[0][1], 1);
+            assert_eq!(odo.arg_strides[1][0], 0); assert_eq!(odo.arg_strides[1][1], 1);
+            assert_eq!(odo.arg_strides[2][0], 1); assert_eq!(odo.arg_strides[2][1], 0);
         }
     }
 

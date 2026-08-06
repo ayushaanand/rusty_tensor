@@ -69,7 +69,7 @@ impl<T: TensorDType> Tensor<T> {
     ///
     ///  # Returns
     /// [`SharedTensor<T>`](SharedTensor<T>) — an `Rc<RefCell<Tensor<T>>>` wrapping the newly created tensor.
-    pub fn new(shape: SmallVec<[DimType; 8]>, def_val: T) -> SharedTensor<T> {
+    pub fn new(shape: &[DimType], def_val: T) -> SharedTensor<T> {
         let new_meta = TensorMeta::new(&shape);
 
         let new_tensor = Tensor {
