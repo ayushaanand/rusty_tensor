@@ -1,31 +1,19 @@
 use crate::consts::*;
 use smallvec::smallvec;
 
-/// Computes the broadcasted output shape from an array of tensor metadata.
+/// Computes the broadcasted output shape from an array of shape slices.
 ///
-/// Follows NumPy-style broadcasting rules: dimensions are aligned from the
-/// right (innermost), and at each position the output size is the non-`1`
-/// value if all tensors agree, or `1` if every tensor has `1` (or is missing
-/// that dimension entirely).
+/// Follows NumPy broadcasting rules: dimensions are aligned from the right,
+/// and at each position the output is the non-`1` value if all inputs agree,
+/// or `1` if every input has `1` (or is absent).
 ///
-/// # Convention: `skip_ranks`
-/// When `skip_ranks > 0`, the innermost `skip_ranks` dimensions are excluded
-/// from broadcast validation and left as `0` in the output. The caller is
-/// responsible for filling those positions with the correct values (e.g., the
-/// matmul result dimensions `M` and `N`).
+/// `skip_dims` excludes the innermost `skip_dims` dimensions from broadcast
+/// validation, leaving them as `0` in the output for the caller to fill
+/// (e.g., the `M` and `N` result dims in batched matmul). Use `0` for
+/// elementwise ops.
 ///
-/// # Arguments
-/// * `args` - Fixed-size array of [`&TensorMeta`](TensorMeta) references.
-/// * `skip_ranks` - Number of innermost dimensions to exclude from broadcasting.
-///   Use `0` for elementwise ops. Use `2` for batched matmul.
-///
-/// # Returns
-/// * `Some(Vec<DimType>)` — the full output shape of length of maximum rank in args.
-///   Positions `[0..max_rank - skip_ranks]` contain the broadcast-resolved
-///   batch dimensions. Positions `[max_rank - skip_ranks..]` are left as `0`
-///   for the caller to fill.
-/// * `None` — if `COUNT == 0`, or if `max_rank < skip_ranks`, or if any two
-///   tensors have incompatible dimensions (neither is `1` and they differ).
+/// Returns `None` if `COUNT == 0`, `max_rank < skip_dims`, or any two inputs
+/// have incompatible non-unit dimensions.
 pub fn compute_broadcast_shape_const<const COUNT: usize>(
     args: [&[DimType]; COUNT],
     skip_dims: usize,
@@ -69,6 +57,12 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
     Some(res)
 }
 
+/// Iterator-based variant of [`compute_broadcast_shape_const`].
+///
+/// Accepts any cloneable iterator of `&[DimType]` slices, suitable when the
+/// number of inputs is not known at compile time. Used internally by
+/// [`TensorIter`](crate::iterator::TensorIter). See [`compute_broadcast_shape_const`]
+/// for full semantics and the `skip_dims` convention.
 pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_dims: usize) -> Option<SmallDimVec>
 where
     I: Iterator<Item = &'a [DimType]> + Clone,
@@ -106,6 +100,11 @@ where
 
     Some(res)
 }
+
+/// Slice-based convenience wrapper over [`compute_broadcast_shape_iter`].
+///
+/// Accepts any `AsRef<[DimType]>` slice (e.g., `&[SmallDimVec]`, `&[Vec<DimType>]`).
+/// See [`compute_broadcast_shape_const`] for full semantics and the `skip_dims` convention.
 pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
     args: &[S],
     skip_dims: usize,
@@ -117,7 +116,7 @@ pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
 mod tests {
     use super::*;
     use crate::make_args;
-    use smallvec::{SmallVec, smallvec};
+    use smallvec::{smallvec};
 
     fn test_fn<const N: usize>(
         args: [SmallDimVec; N],

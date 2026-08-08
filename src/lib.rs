@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 pub mod broadcast;
-pub(crate) mod consts;
+pub mod consts;
 // pub mod math;
 pub mod tensor;
 pub mod iterator;
@@ -21,7 +21,7 @@ macro_rules! make_args {
 
 #[cfg(test)]
 mod tests {
-    use smallvec::{SmallVec, smallvec};
+    use smallvec::{smallvec};
     use crate::consts::SmallDimVec;
     use crate::iterator::TensorIter;
     use crate::tensor::Tensor;
