@@ -1,5 +1,6 @@
 use crate::consts::*;
 use smallvec::smallvec;
+use crate::error::*;
 
 /// Computes the broadcasted output shape from an array of shape slices.
 ///
@@ -9,7 +10,7 @@ use smallvec::smallvec;
 ///
 /// `skip_dims` excludes the innermost `skip_dims` dimensions from broadcast
 /// validation, leaving them as `0` in the output for the caller to fill
-/// (e.g., the `M` and `N` result dims in batched matmul). Use `0` for
+/// (e.g., the `M` and `N` Tensorresult dims inmatmul). Use `0` for
 /// elementwise ops.
 ///
 /// Returns `None` if `COUNT == 0`, `max_rank < skip_dims`, or any two inputs
@@ -17,14 +18,14 @@ use smallvec::smallvec;
 pub fn compute_broadcast_shape_const<const COUNT: usize>(
     args: [&[DimType]; COUNT],
     skip_dims: usize,
-) -> Option<SmallDimVec> {
+) -> TensorResult<SmallDimVec> {
     if COUNT == 0 {
-        return None;
+        return Err(UnexEmptyInputError);
     };
 
     let max_rank = args.iter().map(|&m| m.len()).max().unwrap_or(0);
     if max_rank < skip_dims {
-        return None;
+        return Err(SkipDimError);
     }
     let mut res: SmallDimVec = smallvec![1; max_rank];
 
@@ -47,14 +48,14 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
                         *res_dim = x;
                     } else if *res_dim == x {
                     } else {
-                        return None;
+                        return Err(BroadcastError);
                     }
                 }
             }
         }
     }
 
-    Some(res)
+    Ok(res)
 }
 
 /// Iterator-based variant of [`compute_broadcast_shape_const`].
@@ -63,17 +64,17 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
 /// number of inputs is not known at compile time. Used internally by
 /// [`TensorIter`](crate::iterator::TensorIter). See [`compute_broadcast_shape_const`]
 /// for full semantics and the `skip_dims` convention.
-pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_dims: usize) -> Option<SmallDimVec>
+pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_dims: usize) -> TensorResult<SmallDimVec>
 where
     I: Iterator<Item = &'a [DimType]> + Clone,
 {
     if args_iter.clone().next() == None {
-        return None;
+        return Err(UnexEmptyInputError);
     };
 
     let max_rank = args_iter.clone().map(|a| a.len()).max().unwrap_or(0);
     if max_rank < skip_dims {
-        return None;
+        return Err(SkipDimError);
     }
     let mut res: SmallDimVec = smallvec![1; max_rank];
 
@@ -91,14 +92,14 @@ where
                     *curr_dim = arg_dim
                 } else if *curr_dim == arg_dim {
                 } else {
-                    return None;
+                    return Err(BroadcastError);
                 }
             }
         }
         curr_depth += 1;
     }
 
-    Some(res)
+    Ok(res)
 }
 
 /// Slice-based convenience wrapper over [`compute_broadcast_shape_iter`].
@@ -108,7 +109,7 @@ where
 pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
     args: &[S],
     skip_dims: usize,
-) -> Option<SmallDimVec> {
+) -> TensorResult<SmallDimVec> {
     compute_broadcast_shape_iter(args.iter().map(|s| s.as_ref()), skip_dims)
 }
 
@@ -124,9 +125,9 @@ mod tests {
         res: Option<SmallDimVec>
     ) {
         let const_args = args.each_ref().map(|f| f.as_slice());
-        assert_eq!(compute_broadcast_shape_const(const_args, skip_dims), res);
-        assert_eq!(compute_broadcast_shape(&const_args, skip_dims), res);
-        assert_eq!(compute_broadcast_shape_iter(args.iter().map(|s| s.as_slice()), skip_dims), res);
+        assert_eq!(compute_broadcast_shape_const(const_args, skip_dims).ok(), res);
+        assert_eq!(compute_broadcast_shape(&const_args, skip_dims).ok(), res);
+        assert_eq!(compute_broadcast_shape_iter(args.iter().map(|s| s.as_slice()), skip_dims).ok(), res);
     }
     
     macro_rules! test {

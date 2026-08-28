@@ -4,6 +4,9 @@ pub mod consts;
 // pub mod math;
 pub mod tensor;
 pub mod iterator;
+// mod math;
+pub mod error;
+// mod math;
 
 #[macro_export]
 macro_rules! make_args {
@@ -31,7 +34,7 @@ mod tests {
         let s1: SmallDimVec = smallvec![1, 2, 3];
         let s2: SmallDimVec = smallvec![5, 1, 1];
 
-        let raw_tensors = [Tensor::new(&s1, 5), Tensor::new(&s2, 3)];
+        let raw_tensors = [Tensor::new(&s1, 5f32), Tensor::new(&s2, 3f32)];
 
         let mut t1 = raw_tensors[0].borrow_mut();
         let t2 = raw_tensors[1].borrow();
@@ -52,7 +55,7 @@ mod tests {
             // due to broadcast, each elem of s1 interacts with full s2
             // ie s1[i][j] += sum_{k = 0}^{4} s2[k]
             // ie s1[i][j] += 3 * 5 => t1.data[i] == 5 + 3 * 5 == 20
-            assert_eq!(t1.data[pos[0]], 20);
+            assert_eq!(t1.data[pos[0]], 20f32);
         }
 
         assert_eq!(numel, 30);

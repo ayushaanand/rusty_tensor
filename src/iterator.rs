@@ -3,6 +3,7 @@ use std::cmp::Reverse;
 
 use crate::broadcast::compute_broadcast_shape_iter;
 use crate::consts::*;
+use crate::error::*;
 use crate::tensor::TensorMeta;
 
 /// A pre-optimized, multi-tensor flat-index iterator.
@@ -85,21 +86,21 @@ impl TensorIter {
     /// # use tensor_lib::iterator::TensorIter;
     /// let a = TensorMeta::new(&[2, 3]);
     /// let b = TensorMeta::new(&[1, 3]); // broadcasts against a
-    /// assert!(TensorIter::new([&a, &b], 0).is_some());
-    /// assert!(TensorIter::new([&a, &b], 3).is_none()); // skip_dims > rank
+    /// assert!(TensorIter::new([&a, &b], 0).is_ok());
+    /// assert!(TensorIter::new([&a, &b], 3).is_err()); // skip_dims > rank
     ///
     /// let c = TensorMeta::new(&[4, 3]); // incompatible with a on dim 0
-    /// assert!(TensorIter::new([&a, &c], 0).is_none());
+    /// assert!(TensorIter::new([&a, &c], 0).is_err());
     /// ```
-    pub fn new<'a, I>(args: I, skip_dims: usize) -> Option<Self>
+    pub fn new<'a, I>(args: I, skip_dims: usize) -> TensorResult<Self>
     where
         I: IntoIterator<Item=&'a TensorMeta>,
         I::IntoIter: Clone,
     {
         let it = args.into_iter();
         // 1, 2, 3
-        if !IterBuilder::is_valid(it.clone(), skip_dims) {
-            return None;
+        if let Some(e) = IterBuilder::is_err(it.clone(), skip_dims) {
+            return Err(e);
         }
 
         // 4, 5
@@ -123,7 +124,7 @@ impl TensorIter {
         builder.shrink_to_fit();
 
         // 12. build rest fields
-        Some(builder.build())
+        Ok(builder.build())
     }
 
     /// Resets the iterator to its initial state.
@@ -238,29 +239,29 @@ struct IterBuilder {
 }
 
 impl IterBuilder {
-    fn is_valid<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> bool {
+    fn is_err<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> Option<TensorError> {
         // 1. args.is_empty() -> return None
         let args_len = args.clone().count();
         if args_len == 0 {
-            return false;
+            return Some(UnexEmptyInputError);
         }
 
         // 2. any(arg.total_elems == SIZE_ZERO) -> return None
         if args.clone().any(|m| m.total_elems == 0) {
-            return false;
+            return Some(UnexZeroElemError);
         }
 
         // 3. compute max_rank, if skip_dims > max_rank -> return None
         let max_rank = args.clone().map(|m| m.shape.len()).max().unwrap(); // unwrap is fine because args_len != 0
         if skip_dims > max_rank {
-            return false;
+            return Some(SkipDimError);
         }
 
-        true
+        None
     }
 
-    fn new<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> Option<Self> {
-        // args.len > 0 guaranteed from is_valid
+    fn new<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> TensorResult<Self> {
+        // args.len > 0 guaranteed from is_err
         let max_rank = args.clone().map(|m| m.shape.len()).max().unwrap();
 
         // 4. copy every arg's (shape, stride) to vecs of max_rank: prepend shape with 1, stride with 0, on the left
@@ -284,7 +285,7 @@ impl IterBuilder {
 
         let offsets = args.map(|m| m.offset).collect();
 
-        Some(IterBuilder {
+        Ok(IterBuilder {
             out_shape,
             shapes,
             strides,
@@ -438,33 +439,33 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        assert!(tensor_iter!([], 0).is_none());
-        assert!(tensor_iter!([], 1).is_none());
-        assert!(tensor_iter!([], 2).is_none());
+        assert!(tensor_iter!([], 0).is_err());
+        assert!(tensor_iter!([], 1).is_err());
+        assert!(tensor_iter!([], 2).is_err());
     }
 
     #[test]
     fn test_0_numel() {
-        assert!(tensor_iter!([[0]], 0).is_none());
-        assert!(tensor_iter!([[0]], 1).is_none());
-        assert!(tensor_iter!([[3, 4, 5]], 0).is_some());
-        assert!(tensor_iter!([[3, 4, 0]], 0).is_none());
-        assert!(tensor_iter!([[3, 4, 5], [0]], 0).is_none());
-        assert!(tensor_iter!([[3, 4, 5], [3, 0, 1]], 0).is_none());
-        assert!(tensor_iter!([[3, 1, 5], [3, 0, 1]], 0).is_none());
+        assert!(tensor_iter!([[0]], 0).is_err());
+        assert!(tensor_iter!([[0]], 1).is_err());
+        assert!(tensor_iter!([[3, 4, 5]], 0).is_ok());
+        assert!(tensor_iter!([[3, 4, 0]], 0).is_err());
+        assert!(tensor_iter!([[3, 4, 5], [0]], 0).is_err());
+        assert!(tensor_iter!([[3, 4, 5], [3, 0, 1]], 0).is_err());
+        assert!(tensor_iter!([[3, 1, 5], [3, 0, 1]], 0).is_err());
     }
 
     #[test]
     fn test_skip_dims() {
-        assert!(tensor_iter!([[1]], 0).is_some());
-        assert!(tensor_iter!([[1]], 1).is_some());
-        assert!(tensor_iter!([[1]], 2).is_none());
+        assert!(tensor_iter!([[1]], 0).is_ok());
+        assert!(tensor_iter!([[1]], 1).is_ok());
+        assert!(tensor_iter!([[1]], 2).is_err());
 
-        assert!(tensor_iter!([[2, 2, 2], []], 2).is_some());
-        assert!(tensor_iter!([[2, 2, 2], [2]], 3).is_some());
-        assert!(tensor_iter!([[2, 2, 2], []], 4).is_none());
-        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 3).is_some());
-        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 4).is_none());
+        assert!(tensor_iter!([[2, 2, 2], []], 2).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], [2]], 3).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], []], 4).is_err());
+        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 3).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 4).is_err());
     }
 
     #[test]

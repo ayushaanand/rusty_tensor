@@ -9,7 +9,7 @@ use smallvec::{SmallVec, smallvec};
 /// Type-erased metadata describing a tensor's memory layout.
 ///
 /// Holds shape, stride, offset, and element count — no data or dtype.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TensorMeta {
     pub(crate) shape: SmallDimVec,
     pub(crate) stride: SmallSizeVec,
@@ -33,7 +33,7 @@ impl TensorMeta {
     /// assert_eq!(TensorIter::new([&meta], 0).unwrap().count(), 6);
     ///
     /// let empty = TensorMeta::new(&[2, 0, 3]);
-    /// assert!(TensorIter::new([&empty], 0).is_none());
+    /// assert!(TensorIter::new([&empty], 0).is_err());
     /// ```
     pub fn new(shape: &[DimType]) -> Self {
         let mut res = TensorMeta {
@@ -65,6 +65,8 @@ impl TensorMeta {
 pub struct Tensor<T: TensorDType> {
     pub(crate) meta: TensorMeta,
     pub(crate) data: Vec<T>,
+    pub(crate) grad: Option<Vec<T>>,
+    pub(crate) requires_grad: bool,
 }
 
 impl<T: TensorDType> Tensor<T> {
@@ -72,15 +74,25 @@ impl<T: TensorDType> Tensor<T> {
     ///
     /// `shape` is passed to [`TensorMeta::new`] for stride computation.
     /// `def_val` is equivalent to `torch.full`.
-    pub fn new(shape: &[DimType], def_val: T) -> SharedTensor<T> {
+    fn create_new(shape: &[DimType], def_val: T, requires_grad: bool) -> SharedTensor<T> {
         let new_meta = TensorMeta::new(&shape);
 
         let new_tensor = Tensor {
             data: vec![def_val; new_meta.total_elems as usize],
             meta: new_meta,
+            grad: None,
+            requires_grad
         };
 
         Rc::new(RefCell::new(new_tensor))
+    }
+
+    pub fn new_with_grad(shape: &[DimType], def_val: T) -> SharedTensor<T> {
+        Self::create_new(shape, def_val, true)
+    }
+
+    pub fn new(shape: &[DimType], def_val: T) -> SharedTensor<T> {
+        Self::create_new(shape, def_val, false)
     }
 
     /// Returns the number of dimensions (rank) of this tensor.

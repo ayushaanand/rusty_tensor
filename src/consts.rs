@@ -23,12 +23,14 @@ use std::fmt::Display;
 ///
 /// Valid concrete types include: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`,
 /// `i64`, `f32`, `f64`.
-pub trait TensorDType: num_traits::Num + Clone + Copy + Display {}
-impl<T> TensorDType for T where T: num_traits::Num + Clone + Copy + Display {}
+pub trait TensorDType: num_traits::Num + Clone + Copy + Display + Sum + Product {}
+impl<T> TensorDType for T where T: num_traits::Num + Clone + Copy + Display + Sum + Product {}
 
 use crate::tensor::Tensor;
 use std::cell::RefCell;
+use std::iter::{Product, Sum};
 use std::rc::Rc;
+use crate::error::TensorError;
 
 /// Shared ownership wrapper for all tensors in the engine.
 ///
@@ -37,6 +39,7 @@ use std::rc::Rc;
 ///
 /// Use `.borrow()` for read access and `.borrow_mut()` for write access.
 pub type SharedTensor<T> = Rc<RefCell<Tensor<T>>>;
+pub type TensorResult<T> = Result<T, TensorError>;
 
 #[cfg(feature = "python-testing")]
 #[pyo3::pymodule(name = "consts")]
