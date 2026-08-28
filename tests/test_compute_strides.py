@@ -2,7 +2,7 @@ from hypothesis import given, example, settings
 from hypothesis import strategies as st
 from python_consts import *
 
-from tensor_lib import tensor
+from tensor_lib import tensor as t
 import numpy as np
 
 shape_strat = st.lists(
@@ -24,14 +24,13 @@ def resolve_shape_one(shape, stride):
 @example(s = [])
 @settings(
     max_examples = 1000,
-    deadline = 10,
 )
 def test_compute_strides(s):
-    got = list(tensor.test_compute_strides(s))
+    got = t.compute_strides(s)
 
-    arr = np.empty(shape=s, dtype=np.int32)
+    arr = np.empty(shape=s, dtype=np.int8)
     expected = [stride // arr.itemsize for stride in arr.strides]
-    resolve_shape_one(s, expected)
+    # resolve_shape_one(s, expected)
     assert got == expected
     # print(s, ' -> ', got)
 

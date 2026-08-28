@@ -4,11 +4,15 @@ pub type DimType = u8;
 /// Zero-value sentinel for `DimType`.
 pub const DIM_ZERO: DimType = 0 as DimType;
 
+pub const SMALL_SIZE: usize = 8;
+pub type SmallDimVec = smallvec::SmallVec<[DimType; SMALL_SIZE]>;
+
 /// Represents flat memory positions, strides, and element counts.
 /// If testing, make sure to update PY_SIZE_TYPE below.
-pub type SizeType = u64;
+pub type SizeType = usize;
 /// Zero-value sentinel for `SizeType`.
 pub const SIZE_ZERO: SizeType = 0 as SizeType;
+pub type SmallSizeVec = smallvec::SmallVec<[SizeType; SMALL_SIZE]>;
 
 use std::fmt::Display;
 
@@ -35,9 +39,11 @@ use std::rc::Rc;
 pub type SharedTensor<T> = Rc<RefCell<Tensor<T>>>;
 
 #[cfg(feature = "python-testing")]
-#[pyo3::pymodule(name="consts")]
+#[pyo3::pymodule(name = "consts")]
 #[allow(dead_code)]
-pub mod consts_tests {
-    #[pymodule_export] const PY_DIM_TYPE: &str = "uint8";
-    #[pymodule_export] const PY_SIZE_TYPE: &str = "uint64";
+pub mod py_tests {
+    #[pymodule_export]
+    const PY_DIM_TYPE: &str = "uint8";
+    #[pymodule_export]
+    const PY_SIZE_TYPE: &str = "uint64";
 }
