@@ -23,14 +23,15 @@ use std::fmt::Display;
 ///
 /// Valid concrete types include: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`,
 /// `i64`, `f32`, `f64`.
-pub trait TensorDType: num_traits::Num + Clone + Copy + Display + Sum + Product {}
-impl<T> TensorDType for T where T: num_traits::Num + Clone + Copy + Display + Sum + Product {}
+pub trait TensorDType: num_traits::Num + Clone + Copy + Display + Sum + Product + AddAssign {}
+impl<T> TensorDType for T where T: num_traits::Num + Clone + Copy + Display + Sum + Product + AddAssign{}
 
+use crate::error::TensorError;
 use crate::tensor::Tensor;
 use std::cell::RefCell;
 use std::iter::{Product, Sum};
+use std::ops::AddAssign;
 use std::rc::Rc;
-use crate::error::TensorError;
 
 /// Shared ownership wrapper for all tensors in the engine.
 ///

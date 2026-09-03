@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use crate::broadcast::compute_broadcast_shape_iter;
 use crate::consts::*;
 use crate::error::*;
-use crate::tensor::TensorMeta;
+use crate::tensor::{Tensor, TensorMeta};
 
 /// A pre-optimized, multi-tensor flat-index iterator.
 ///
@@ -63,10 +63,9 @@ pub struct TensorIter {
 // 12. build rest fields
 // *. out_shape.len == 0 is handled as special case by inserting a stub dim 1 to remove branches in advance
 
-trait MetaIter<'a>: Iterator<Item=&'a TensorMeta> + Clone {}
+trait MetaIter<'a>: Iterator<Item = &'a TensorMeta> + Clone {}
 
-impl<'a, T> MetaIter<'a> for T
-where T: Iterator<Item=&'a TensorMeta> + Clone {}
+impl<'a, T> MetaIter<'a> for T where T: Iterator<Item = &'a TensorMeta> + Clone {}
 
 impl TensorIter {
     /// Constructs a `TensorIter` for the given tensor arguments.
@@ -94,7 +93,7 @@ impl TensorIter {
     /// ```
     pub fn new<'a, I>(args: I, skip_dims: usize) -> TensorResult<Self>
     where
-        I: IntoIterator<Item=&'a TensorMeta>,
+        I: IntoIterator<Item = &'a TensorMeta>,
         I::IntoIter: Clone,
     {
         let it = args.into_iter();
@@ -125,6 +124,15 @@ impl TensorIter {
 
         // 12. build rest fields
         Ok(builder.build())
+    }
+
+    pub fn from_tensors<'a, I, T>(args: I, skip_dims: usize) -> TensorResult<Self>
+    where
+        I: IntoIterator<Item = &'a Tensor<T>>,
+        T: TensorDType + 'a,
+        I::IntoIter: Clone,
+    {
+        Self::new(args.into_iter().map(|a| &a.meta), skip_dims)
     }
 
     /// Resets the iterator to its initial state.
@@ -427,8 +435,8 @@ macro_rules! tensor_iter {
 
 #[cfg(test)]
 mod tests {
-    use crate::tensor::*;
     use super::TensorIter;
+    use crate::tensor::*;
 
     // #[test]
     // fn test_example_use() {
@@ -479,14 +487,19 @@ mod tests {
         {
             let odo = tensor_iter!([[2, 2], [2], [2, 1]], 0).unwrap();
             assert_eq!(odo.out_shape.len(), 2);
-            assert_eq!(odo.out_shape[0], 2); assert_eq!(odo.out_shape[1], 2);
-            assert_eq!(odo.arg_strides[0][0], 2); assert_eq!(odo.arg_strides[0][1], 1);
-            assert_eq!(odo.arg_strides[1][0], 0); assert_eq!(odo.arg_strides[1][1], 1);
-            assert_eq!(odo.arg_strides[2][0], 1); assert_eq!(odo.arg_strides[2][1], 0);
+            assert_eq!(odo.out_shape[0], 2);
+            assert_eq!(odo.out_shape[1], 2);
+            assert_eq!(odo.arg_strides[0][0], 2);
+            assert_eq!(odo.arg_strides[0][1], 1);
+            assert_eq!(odo.arg_strides[1][0], 0);
+            assert_eq!(odo.arg_strides[1][1], 1);
+            assert_eq!(odo.arg_strides[2][0], 1);
+            assert_eq!(odo.arg_strides[2][1], 0);
         }
     }
 
     #[test]
+    #[rustfmt::skip]
     fn test_iter() {
         let mut odo = tensor_iter!([[2, 2], [1, 2], [2, 1]], 0).unwrap();
         assert_eq!(odo.pos[0], 0); assert_eq!(odo.pos[1], 0); assert_eq!(odo.pos[2], 0); assert_eq!(odo.done, false); odo.advance();
