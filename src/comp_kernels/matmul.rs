@@ -1,11 +1,14 @@
 use crate::consts::{DimType, TensorDType};
 use crate::iterator::TensorIter;
 
-pub fn matmul_op_accum<T: TensorDType> (
-    t_r: &mut Box<[T]>,
-    t_a: &Box<[T]>, t_b: &Box<[T]>,
+pub fn matmul_op_accum<T: TensorDType>(
+    t_r: &mut [T],
+    t_a: &[T],
+    t_b: &[T],
     it: &mut TensorIter,
-    m: DimType, p: DimType, n: DimType,
+    m: DimType,
+    p: DimType,
+    n: DimType,
 ) {
     let (m, p, n) = (m as usize, p as usize, n as usize);
     it.reset();
@@ -27,8 +30,8 @@ pub fn matmul_op_accum<T: TensorDType> (
 
 #[cfg(test)]
 mod tests {
-    use crate::tensor::Tensor;
     use super::*;
+    use crate::tensor::Tensor;
 
     #[test]
     fn test_matmul_sq() {
@@ -37,12 +40,7 @@ mod tests {
         let mut c = Tensor::new(&[2, 2], 0);
 
         let mut it = TensorIter::from_tensors([&c, &b, &a], 2).unwrap();
-        matmul_op_accum(
-            &mut c.data,
-            &a.data, &b.data,
-            &mut it,
-            2, 2, 2
-        );
+        matmul_op_accum(&mut c.data, &a.data, &b.data, &mut it, 2, 2, 2);
 
         assert_eq!(c, Tensor::from_buf(&[2, 2], [8, 5, 20, 13]).unwrap());
     }
@@ -54,12 +52,7 @@ mod tests {
         let mut c = Tensor::new(&[2, 2], 0);
 
         let mut it = TensorIter::from_tensors([&c, &a, &b], 2).unwrap();
-        matmul_op_accum(
-            &mut c.data,
-            &a.data, &b.data,
-            &mut it,
-            2, 3, 2
-        );
+        matmul_op_accum(&mut c.data, &a.data, &b.data, &mut it, 2, 3, 2);
 
         assert_eq!(c, Tensor::from_buf(&[2, 2], [20, 14, 56, 41]).unwrap());
     }
@@ -67,20 +60,17 @@ mod tests {
     #[test]
     fn test_matmul_rect_broadcast() {
         let repeats = 5;
-        let a = Tensor::from_buf(
-            &[repeats, 2, 3], (1..=6).cycle().take(repeats as usize * 6)
-        ).unwrap();
+        let a =
+            Tensor::from_buf(&[repeats, 2, 3], (1..=6).cycle().take(repeats as usize * 6)).unwrap();
         let b = Tensor::from_buf(&[3, 2], (1..=6).rev()).unwrap();
         let mut c = Tensor::new(&[2, 2], 0);
 
         let mut it = TensorIter::from_tensors([&c, &a, &b], 2).unwrap();
-        matmul_op_accum(
-            &mut c.data,
-            &a.data, &b.data,
-            &mut it,
-            2, 3, 2
-        );
+        matmul_op_accum(&mut c.data, &a.data, &b.data, &mut it, 2, 3, 2);
 
-        assert_eq!(c, Tensor::from_buf(&[2, 2], [20, 14, 56, 41].map(|x| repeats as i32 * x)).unwrap());
+        assert_eq!(
+            c,
+            Tensor::from_buf(&[2, 2], [20, 14, 56, 41].map(|x| repeats as i32 * x)).unwrap()
+        );
     }
 }

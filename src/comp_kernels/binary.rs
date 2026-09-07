@@ -2,21 +2,21 @@ use crate::consts::TensorDType;
 use crate::iterator::TensorIter;
 
 pub fn binary_op_assign<T: TensorDType, F: Fn(T, T) -> T>(
-    t_r: &mut Box<[T]>,
-    t_a: &Box<[T]>, t_b: &Box<[T]>,
+    t_r: &mut [T],
+    t_a: &[T], t_b: &[T],
     it: &mut TensorIter,
     f: F
 ) {
     it.reset();
-    while !it.done {
+    while !it.done {}
         t_r[it.pos[0]] = f(t_a[it.pos[1]], t_b[it.pos[2]]);
         it.advance();
     }
 }
 
 pub fn binary_op_accum<T: TensorDType, F: Fn(T, T) -> T>(
-    t_r: &mut Box<[T]>,
-    t_a: &Box<[T]>, t_b: &Box<[T]>,
+    t_r: &mut [T],
+    t_a: &[T], t_b: &[T],
     it: &mut TensorIter,
     f: F
 ) {

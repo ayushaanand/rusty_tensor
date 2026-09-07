@@ -2,9 +2,10 @@ use crate::consts::*;
 use crate::iterator::TensorIter;
 
 pub fn unary_op_assign<T: TensorDType, F: Fn(T) -> T>(
-    t_r: &mut Box<[T]>, t_o: &Box<[T]>,
+    t_r: &mut [T],
+    t_o: &[T],
     it: &mut TensorIter,
-    f: F
+    f: F,
 ) {
     it.reset();
     while !it.done {
@@ -14,9 +15,10 @@ pub fn unary_op_assign<T: TensorDType, F: Fn(T) -> T>(
 }
 
 pub fn unary_op_accum<T: TensorDType, F: Fn(T) -> T>(
-    t_r: &mut Box<[T]>, t_o: &Box<[T]>,
+    t_r: &mut [T],
+    t_o: &[T],
     it: &mut TensorIter,
-    f: F
+    f: F,
 ) {
     it.reset();
     while !it.done {
@@ -27,8 +29,8 @@ pub fn unary_op_accum<T: TensorDType, F: Fn(T) -> T>(
 
 #[cfg(test)]
 mod tests {
-    use crate::tensor::Tensor;
     use super::*;
+    use crate::tensor::Tensor;
 
     #[test]
     fn test_unary_op_assign_i32_ident() {
