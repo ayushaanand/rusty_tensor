@@ -1,6 +1,7 @@
 use crate::consts::*;
-use smallvec::smallvec;
 use crate::error::*;
+
+use smallvec::smallvec;
 
 /// Computes the broadcasted output shape from an array of shape slices.
 ///
@@ -10,7 +11,7 @@ use crate::error::*;
 ///
 /// `skip_dims` excludes the innermost `skip_dims` dimensions from broadcast
 /// validation, leaving them as `0` in the output for the caller to fill
-/// (e.g., the `M` and `N` Tensorresult dims inmatmul). Use `0` for
+/// (e.g., the `M` and `N` dims in matmul). Use `0` for
 /// elementwise ops.
 ///
 /// Returns `None` if `COUNT == 0`, `max_rank < skip_dims`, or any two inputs
@@ -64,7 +65,10 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
 /// number of inputs is not known at compile time. Used internally by
 /// [`TensorIter`](crate::iterator::TensorIter). See [`compute_broadcast_shape_const`]
 /// for full semantics and the `skip_dims` convention.
-pub fn compute_broadcast_shape_iter<'a, I>(args_iter: I, skip_dims: usize) -> TensorResult<SmallDimVec>
+pub fn compute_broadcast_shape_iter<'a, I>(
+    args_iter: I,
+    skip_dims: usize,
+) -> TensorResult<SmallDimVec>
 where
     I: Iterator<Item = &'a [DimType]> + Clone,
 {
@@ -72,7 +76,8 @@ where
         return Err(UnexEmptyInputError);
     };
 
-    let max_rank = args_iter.clone().map(|a| a.len()).max().unwrap_or(0);
+    // .unwrap is safe because of above check,
+    let max_rank = args_iter.clone().map(|a| a.len()).max().unwrap();
     if max_rank < skip_dims {
         return Err(SkipDimError);
     }
@@ -87,12 +92,11 @@ where
             if arg.len() > curr_depth {
                 let arg_dim = arg[arg.len() - curr_depth - 1];
 
-                if arg_dim == 1 {
-                } else if *curr_dim == 1 {
-                    *curr_dim = arg_dim
-                } else if *curr_dim == arg_dim {
-                } else {
-                    return Err(BroadcastError);
+                match arg_dim {
+                    1 => {}
+                    d if *curr_dim == 1 => *curr_dim = d,
+                    d if *curr_dim == d => {}
+                    _ => return Err(BroadcastError),
                 }
             }
         }
@@ -102,10 +106,35 @@ where
     Ok(res)
 }
 
-/// Slice-based convenience wrapper over [`compute_broadcast_shape_iter`].
+/// Does NumPy style broadcast on >0 shapes
 ///
-/// Accepts any `AsRef<[DimType]>` slice (e.g., `&[SmallDimVec]`, `&[Vec<DimType>]`).
-/// See [`compute_broadcast_shape_const`] for full semantics and the `skip_dims` convention.
+/// # Examples
+/// ```
+/// # use tensor_lib::broadcast::compute_broadcast_shape;
+/// # use smallvec::{SmallVec, smallvec};
+/// # fn main() {
+/// let s1 = [2, 1].as_slice();
+/// let s2 = [2].as_slice();
+/// assert_eq!(compute_broadcast_shape(&[s1, s2], 0).unwrap(), SmallVec::from_buf([2, 2]));
+/// assert_eq!(compute_broadcast_shape(&[s1, s2], 1).unwrap(), SmallVec::from_buf([2, 1]));
+/// assert_eq!(compute_broadcast_shape(&[s1, s2], 2).unwrap(), SmallVec::from_buf([1, 1]));
+/// # }
+/// ```
+/// # Errors
+/// Can give [`UnexEmptyInputError`](UnexEmptyInputError), [`SkipDimError`](SkipDimError),
+/// [`BroadcastError`](BroadcastError), in order of priority.
+/// ```
+/// # use tensor_lib::broadcast::compute_broadcast_shape;
+/// # use tensor_lib::error::TensorError::*;
+/// # fn main() {
+/// let s1 = [2, 1].as_slice();
+/// let s2 = [3, 2].as_slice();
+/// let s3 = [1, 2].as_slice();
+/// assert_eq!(compute_broadcast_shape(&[s1, s2], 0).err().unwrap(), BroadcastError);
+/// assert_eq!(compute_broadcast_shape::<&[u8]>(&[], 1).err().unwrap(), UnexEmptyInputError);
+/// assert_eq!(compute_broadcast_shape(&[s1, s3], 3).err().unwrap(), SkipDimError);
+/// # }
+/// ```
 pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
     args: &[S],
     skip_dims: usize,
@@ -117,19 +146,17 @@ pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
 mod tests {
     use super::*;
     use crate::make_args;
-    use smallvec::{smallvec};
+    use smallvec::smallvec;
 
-    fn test_fn<const N: usize>(
-        args: [SmallDimVec; N],
-        skip_dims: usize,
-        res: Option<SmallDimVec>
-    ) {
+    fn test_fn<const N: usize>(args: [SmallDimVec; N], skip_dims: usize, res: Option<SmallDimVec>) {
         let const_args = args.each_ref().map(|f| f.as_slice());
-        assert_eq!(compute_broadcast_shape_const(const_args, skip_dims).ok(), res);
         assert_eq!(compute_broadcast_shape(&const_args, skip_dims).ok(), res);
-        assert_eq!(compute_broadcast_shape_iter(args.iter().map(|s| s.as_slice()), skip_dims).ok(), res);
+        assert_eq!(
+            compute_broadcast_shape_iter(args.iter().map(|s| s.as_slice()), skip_dims).ok(),
+            res
+        );
     }
-    
+
     macro_rules! test {
         ([$($args:tt),*], $skip:expr, $($res:tt)*) => {
             {
