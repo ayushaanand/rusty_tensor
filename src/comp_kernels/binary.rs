@@ -8,7 +8,7 @@ pub fn binary_op_assign<T: TensorDType, F: Fn(T, T) -> T>(
     f: F
 ) {
     it.reset();
-    while !it.done {}
+    while !it.done {
         t_r[it.pos[0]] = f(t_a[it.pos[1]], t_b[it.pos[2]]);
         it.advance();
     }
