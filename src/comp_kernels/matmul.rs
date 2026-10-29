@@ -1,7 +1,7 @@
 use crate::consts::{DimType, TensorDType};
 use crate::iterator::TensorIter;
 
-pub fn matmul_op_accum<T: TensorDType>(
+fn matmul_op_accum<T: TensorDType>(
     t_r: &mut [T],
     t_a: &[T],
     t_b: &[T],

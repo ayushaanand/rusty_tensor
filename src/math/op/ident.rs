@@ -1,19 +1,38 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::consts::*;
-use crate::math::{expr::Expr, op::*};
+use crate::iterator::TensorIter;
+use crate::math::{
+    Expr, Var,
+    op::{IdentOp, Op::Ident},
+};
+use crate::shared_types::{Shared, SharedSlice};
 
-pub fn ident<T: TensorDType>(input: &SharedTensor<T>, requires_grad: bool) -> SharedExpr<T> {
-    let op = Op::Ident(IdentOp { input: input.clone() });
+pub fn ident<T: TensorFType>(
+    input: &Shared<Var<T>>,
+    requires_grad: bool,
+) -> TensorResult<Shared<Expr<T>>> {
+    let borrow = input.borrow();
 
+    let it = TensorIter::new([&borrow.meta], 0)?;
+    let op = Ident(IdentOp {
+        input: input.clone(),
+        it,
+    });
+
+    let grad = if requires_grad {
+        Some(SharedSlice::zeroes(borrow.meta.total_elems))
+    } else {
+        None
+    };
     let expr = Expr {
-        meta: input.borrow().meta.clone(),
-        data: None,
-        grad: None,
+        var: Var {
+            meta: borrow.meta.clone(),
+            data: borrow.data.clone(),
+            requires_grad,
+        },
+        grad,
         op,
-        requires_grad,
-        retain_data: false
+        retain_data: false,
     };
 
-    Rc::new(RefCell::new(expr))
+    Ok(Shared::new(expr))
 }

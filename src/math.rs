@@ -1,2 +1,19 @@
-// pub(crate) mod expr;
-// mod op;
+use crate::consts::*;
+use crate::math::op::Op;
+use crate::shared_types::SharedSlice;
+use crate::tensor::TensorMeta;
+
+mod op;
+
+struct Var<T: TensorFType> {
+    meta: TensorMeta,
+    data: SharedSlice<T>,
+    requires_grad: bool,
+}
+
+struct Expr<T: TensorFType> {
+    var: Var<T>,
+    grad: Option<SharedSlice<T>>, // None only for ident nodes
+    op: Op<T>,
+    retain_data: bool,
+}

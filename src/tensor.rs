@@ -1,11 +1,11 @@
 use crate::consts::*;
 
+use smallvec::{SmallVec, smallvec};
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
-use smallvec::{SmallVec, smallvec};
 
+use crate::error::ShapeError;
 use crate::iterator::TensorIter;
-use crate::error::{ShapeError};
 
 /// Type-erased metadata describing a tensor's memory layout.
 /// Holds shape, stride, offset, and element count — no data or dtype.
@@ -64,9 +64,10 @@ impl TensorMeta {
     }
 }
 
-/// A multi-dimensional strided tensor backed by a `Box<[T]>`, so number of elems cant be changed later.
-///
-/// Always constructed via [`Tensor::new`](crate::tensor::Tensor::new), which returns a [`SharedTensor<T>`](crate::consts::SharedTensor)
+/// A multidimensional strided tensor, which supports all numerical types, backed by a `Box<[T]>`,
+/// so number of elems cant be changed later.
+/// Supports dtype which implements the [`TensorDType`](TensorDType) trait (eg, i32, f64, etc.)
+/// Always constructed via [`Tensor::new`](Tensor::new)
 /// (`Rc<RefCell<Tensor<T>>>`). Interact with it through `.borrow()` / `.borrow_mut()`.
 #[derive(Debug, PartialEq)]
 pub struct Tensor<T> {
@@ -80,7 +81,7 @@ impl<T: TensorDType> Tensor<T> {
         let new_meta = TensorMeta::new(shape);
 
         Tensor {
-            data: vec![def_val; new_meta.total_elems as usize].into_boxed_slice(),
+            data: vec![def_val; new_meta.total_elems].into_boxed_slice(),
             meta: new_meta,
         }
     }
@@ -97,7 +98,7 @@ impl<T: TensorDType> Tensor<T> {
     }
 
     /// Returns the element at the given flat index, or `None` if out of bounds.
-    pub fn get(&self, idx: SizeType) -> Option<T> {
+    pub fn get(&mut self, idx: SizeType) -> Option<T> {
         if idx < self.meta.total_elems {
             Some(self[idx])
         } else {
@@ -113,8 +114,9 @@ impl<T: TensorDType> Tensor<T> {
         let mut it = TensorIter::from_tensors([&t], 0)?;
 
         for i in buf {
-            if it.done { break; }
-            else {
+            if it.done {
+                break;
+            } else {
                 t[it.pos[0]] = i;
                 it.advance()
             }

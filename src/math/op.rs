@@ -1,13 +1,15 @@
-mod ident;
 mod binary;
-mod unary;
 mod custom_unary;
+mod ident;
+mod matmul;
+mod unary;
 
-use smallvec::SmallVec;
 use crate::consts::*;
 use crate::iterator::TensorIter;
+use crate::math::{Expr, Var};
+use crate::shared_types::Shared;
 
-pub(crate) enum Op<T: TensorDType> {
+pub(crate) enum Op<T: TensorFType> {
     Ident(IdentOp<T>),
 
     Add(BinaryOp<T>),
@@ -26,33 +28,34 @@ pub(crate) enum Op<T: TensorDType> {
     Slice(ViewOp<T>),
 }
 
-
-pub struct IdentOp<T: TensorDType> {
-    input: SharedTensor<T>
-}
-
-struct BinaryOp<T: TensorDType> {
-    input: [SharedExpr<T>; 2],
+pub struct IdentOp<T: TensorFType> {
+    input: Shared<Var<T>>,
     it: TensorIter,
 }
 
-struct UnaryOp<T: TensorDType> {
-    input: SharedExpr<T>,
+pub struct BinaryOp<T: TensorFType> {
+    input: [Shared<Expr<T>>; 2],
     it: TensorIter,
 }
 
-struct CustomUnaryOp<T: TensorDType> {
+pub struct UnaryOp<T: TensorFType> {
+    input: Shared<Expr<T>>,
+    it: TensorIter,
+}
+
+pub struct CustomUnaryOp<T: TensorFType> {
     u_op: UnaryOp<T>,
     f_fwd: fn(T) -> T,
     f_bwd: fn(T) -> T,
 }
 
-struct MatMulOp<T: TensorDType> {
-    a: SharedExpr<T>, b: SharedExpr<T>,
+pub struct MatMulOp<T: TensorFType> {
+    a: Shared<Expr<T>>,
+    b: Shared<Expr<T>>,
     it: TensorIter,
 }
 
-struct ViewOp<T: TensorDType> {
-    input: SharedExpr<T>,
+pub struct ViewOp<T: TensorFType> {
+    input: Shared<Expr<T>>,
     it: TensorIter,
 }

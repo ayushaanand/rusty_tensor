@@ -1,11 +1,12 @@
 use crate::consts::TensorDType;
 use crate::iterator::TensorIter;
 
-pub fn binary_op_assign<T: TensorDType, F: Fn(T, T) -> T>(
+fn binary_op_assign<T: TensorDType, F: Fn(T, T) -> T>(
     t_r: &mut [T],
-    t_a: &[T], t_b: &[T],
+    t_a: &[T],
+    t_b: &[T],
     it: &mut TensorIter,
-    f: F
+    f: F,
 ) {
     it.reset();
     while !it.done {
@@ -14,11 +15,12 @@ pub fn binary_op_assign<T: TensorDType, F: Fn(T, T) -> T>(
     }
 }
 
-pub fn binary_op_accum<T: TensorDType, F: Fn(T, T) -> T>(
+fn binary_op_accum<T: TensorDType, F: Fn(T, T) -> T>(
     t_r: &mut [T],
-    t_a: &[T], t_b: &[T],
+    t_a: &[T],
+    t_b: &[T],
     it: &mut TensorIter,
-    f: F
+    f: F,
 ) {
     it.reset();
     while !it.done {
@@ -29,8 +31,8 @@ pub fn binary_op_accum<T: TensorDType, F: Fn(T, T) -> T>(
 
 #[cfg(test)]
 mod tests {
-    use crate::tensor::Tensor;
     use super::*;
+    use crate::tensor::Tensor;
 
     #[test]
     fn test_binary_op_accum_i32_add() {
@@ -40,12 +42,7 @@ mod tests {
         let mut t3 = Tensor::new(&[2, 3], 0);
         let mut it = TensorIter::from_tensors([&t3, &t2, &t1], 0).unwrap();
 
-        binary_op_accum(
-            &mut t3.data,
-            &t1.data, &t2.data,
-            &mut it,
-            |a, b| a + b
-        );
+        binary_op_accum(&mut t3.data, &t1.data, &t2.data, &mut it, |a, b| a + b);
 
         it.reset();
         for i in it {
@@ -61,12 +58,7 @@ mod tests {
         let mut t3 = Tensor::new(&[2, 3], 0);
         let mut it = TensorIter::from_tensors([&t3, &t1, &t2], 0).unwrap();
 
-        binary_op_accum(
-            &mut t3.data,
-            &t1.data, &t2.data,
-            &mut it,
-            |a, b| a ^ b
-        );
+        binary_op_accum(&mut t3.data, &t1.data, &t2.data, &mut it, |a, b| a ^ b);
 
         it.reset();
         for i in it {
@@ -82,12 +74,9 @@ mod tests {
         let mut t3 = Tensor::new(&[2, 3], 6f32);
         let mut it = TensorIter::from_tensors([&t3, &t1, &t2], 0).unwrap();
 
-        binary_op_assign(
-            &mut t3.data,
-            &t1.data, &t2.data,
-            &mut it,
-            |a, b| a.exp() + b
-        );
+        binary_op_assign(&mut t3.data, &t1.data, &t2.data, &mut it, |a, b| {
+            a.exp() + b
+        });
 
         it.reset();
         for i in it {

@@ -1,3 +1,3 @@
-pub mod unary;
-pub mod binary;
-pub mod matmul;
+mod binary;
+mod matmul;
+mod unary;

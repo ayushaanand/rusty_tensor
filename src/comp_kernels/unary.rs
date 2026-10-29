@@ -1,7 +1,7 @@
 use crate::consts::*;
 use crate::iterator::TensorIter;
 
-pub fn unary_op_assign<T: TensorDType, F: Fn(T) -> T>(
+fn unary_op_assign<T: TensorDType, F: Fn(T) -> T>(
     t_r: &mut [T],
     t_o: &[T],
     it: &mut TensorIter,
@@ -14,7 +14,7 @@ pub fn unary_op_assign<T: TensorDType, F: Fn(T) -> T>(
     }
 }
 
-pub fn unary_op_accum<T: TensorDType, F: Fn(T) -> T>(
+fn unary_op_accum<T: TensorDType, F: Fn(T) -> T>(
     t_r: &mut [T],
     t_o: &[T],
     it: &mut TensorIter,

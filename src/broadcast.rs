@@ -13,9 +13,6 @@ use smallvec::smallvec;
 /// validation, leaving them as `0` in the output for the caller to fill
 /// (e.g., the `M` and `N` dims in matmul). Use `0` for
 /// elementwise ops.
-///
-/// Returns `None` if `COUNT == 0`, `max_rank < skip_dims`, or any two inputs
-/// have incompatible non-unit dimensions.
 pub fn compute_broadcast_shape_const<const COUNT: usize>(
     args: [&[DimType]; COUNT],
     skip_dims: usize,
@@ -72,7 +69,7 @@ pub fn compute_broadcast_shape_iter<'a, I>(
 where
     I: Iterator<Item = &'a [DimType]> + Clone,
 {
-    if args_iter.clone().next() == None {
+    if args_iter.clone().next().is_none() {
         return Err(UnexEmptyInputError);
     };
 
@@ -85,22 +82,21 @@ where
 
     let avb_rank = max_rank.saturating_sub(skip_dims);
     let res_it = res[..avb_rank].iter_mut().rev();
-    let mut curr_depth = skip_dims;
 
-    for curr_dim in res_it {
+    for (curr_depth, curr_dim) in (skip_dims..).zip(res_it) {
         for arg in args_iter.clone() {
-            if arg.len() > curr_depth {
-                let arg_dim = arg[arg.len() - curr_depth - 1];
+            let Some(idx) = arg.len().checked_sub(curr_depth + 1) else {
+                continue;
+            };
+            let arg_dim = arg[idx];
 
-                match arg_dim {
-                    1 => {}
-                    d if *curr_dim == 1 => *curr_dim = d,
-                    d if *curr_dim == d => {}
-                    _ => return Err(BroadcastError),
-                }
+            match arg_dim {
+                1 => {}
+                d if *curr_dim == 1 => *curr_dim = d,
+                d if *curr_dim == d => {}
+                _ => return Err(BroadcastError),
             }
         }
-        curr_depth += 1;
     }
 
     Ok(res)
@@ -112,13 +108,11 @@ where
 /// ```
 /// # use tensor_lib::broadcast::compute_broadcast_shape;
 /// # use smallvec::{SmallVec, smallvec};
-/// # fn main() {
 /// let s1 = [2, 1].as_slice();
 /// let s2 = [2].as_slice();
 /// assert_eq!(compute_broadcast_shape(&[s1, s2], 0).unwrap(), SmallVec::from_buf([2, 2]));
 /// assert_eq!(compute_broadcast_shape(&[s1, s2], 1).unwrap(), SmallVec::from_buf([2, 1]));
 /// assert_eq!(compute_broadcast_shape(&[s1, s2], 2).unwrap(), SmallVec::from_buf([1, 1]));
-/// # }
 /// ```
 /// # Errors
 /// Can give [`UnexEmptyInputError`](UnexEmptyInputError), [`SkipDimError`](SkipDimError),
@@ -126,14 +120,12 @@ where
 /// ```
 /// # use tensor_lib::broadcast::compute_broadcast_shape;
 /// # use tensor_lib::error::TensorError::*;
-/// # fn main() {
 /// let s1 = [2, 1].as_slice();
 /// let s2 = [3, 2].as_slice();
 /// let s3 = [1, 2].as_slice();
 /// assert_eq!(compute_broadcast_shape(&[s1, s2], 0).err().unwrap(), BroadcastError);
-/// assert_eq!(compute_broadcast_shape::<&[u8]>(&[], 1).err().unwrap(), UnexEmptyInputError);
+/// assert_eq!(compute_broadcast_shape::<&[_]>(&[], 1).err().unwrap(), UnexEmptyInputError);
 /// assert_eq!(compute_broadcast_shape(&[s1, s3], 3).err().unwrap(), SkipDimError);
-/// # }
 /// ```
 pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
     args: &[S],

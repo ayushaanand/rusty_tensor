@@ -1,10 +1,12 @@
 #![cfg_attr(test, allow(dead_code))]
 pub mod broadcast;
+pub(crate) mod comp_kernels;
 pub mod consts;
 pub mod error;
 pub mod iterator;
+mod math;
+mod shared_types;
 pub mod tensor;
-mod comp_kernels;
 
 #[macro_export]
 macro_rules! make_args {
@@ -18,9 +20,9 @@ macro_rules! make_args {
 
 #[cfg(test)]
 mod tests {
-    use smallvec::SmallVec;
     use crate::iterator::TensorIter;
     use crate::tensor::Tensor;
+    use smallvec::SmallVec;
 
     #[test]
     fn test_usage() {

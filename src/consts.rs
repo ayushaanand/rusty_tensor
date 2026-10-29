@@ -1,10 +1,10 @@
+pub const SMALL_SIZE: usize = 8;
+
 /// Represents a single dimension value (max 255 per axis).
 /// If testing, make sure to update PY_DIM_TYPE below.
 pub type DimType = u8;
 /// Zero-value sentinel for `DimType`.
 pub const DIM_ZERO: DimType = 0 as DimType;
-
-pub const SMALL_SIZE: usize = 8;
 pub type SmallDimVec = smallvec::SmallVec<[DimType; SMALL_SIZE]>;
 
 /// Represents flat memory positions, strides, and element counts.
@@ -14,32 +14,34 @@ pub type SizeType = usize;
 pub const SIZE_ZERO: SizeType = 0 as SizeType;
 pub type SmallSizeVec = smallvec::SmallVec<[SizeType; SMALL_SIZE]>;
 
-use std::fmt::Display;
-
 /// Unified super-trait for all valid tensor element types.
 ///
-/// Blanket-implemented for any `T` satisfying `Num + Clone + Copy + Display`.
+/// Blanket-implemented for any `T` satisfying [`Num`](num_traits::Num) + [`Clone`](Clone) +
+/// [`Copy`](Copy) + [`Display`](Display) + [`Sum`](Sum) +
+/// [`Product`](Product) + [`AddAssign`](AddAssign).
 /// Use `T: TensorDType` on `impl` blocks instead of repeating the full bound list.
 ///
 /// Valid concrete types include: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`,
 /// `i64`, `f32`, `f64`.
-pub trait TensorDType: num_traits::Num + Clone + Copy + Display + Sum + Product + AddAssign {}
-impl<T> TensorDType for T where T: num_traits::Num + Clone + Copy + Display + Sum + Product + AddAssign{}
+trait ExtraNumericTraits: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign {}
+impl<T> ExtraNumericTraits for T where
+    T: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign
+{
+}
+
+#[allow(private_bounds)]
+pub trait TensorDType: num_traits::Num + ExtraNumericTraits {}
+impl<T> TensorDType for T where T: num_traits::Num + ExtraNumericTraits {}
+
+#[allow(private_bounds)]
+pub trait TensorFType: num_traits::Float + ExtraNumericTraits {}
+impl<T> TensorFType for T where T: num_traits::Float + ExtraNumericTraits {}
 
 use crate::error::TensorError;
-use crate::tensor::Tensor;
-use std::cell::RefCell;
+use std::fmt::Display;
 use std::iter::{Product, Sum};
-use std::ops::AddAssign;
-use std::rc::Rc;
+use std::ops::{AddAssign, SubAssign};
 
-/// Shared ownership wrapper for all tensors in the engine.
-///
-/// Wraps `Tensor<T>` in `Rc` (shared ownership) and `RefCell` (interior mutability),
-/// enabling safe shared mutable access required by the computation graph.
-///
-/// Use `.borrow()` for read access and `.borrow_mut()` for write access.
-pub type SharedTensor<T> = Rc<RefCell<Tensor<T>>>;
 pub type TensorResult<T> = Result<T, TensorError>;
 
 #[cfg(feature = "python-testing")]

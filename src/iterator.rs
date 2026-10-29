@@ -159,8 +159,8 @@ impl TensorIter {
 
     /// Advances to the next logical position, updating all entries in `pos`.
     ///
-    /// Sets `done` when the last element has been passed. Calling this when
-    /// `done` is already `true` is undefined behavior.
+    /// Sets `done` when the last element has been passed.
+    /// If sure about `done` being false, use [`advance_unchecked`](crate::iterator::TensorIter::advance_uncheked)
     ///
     /// # Example
     /// ```
@@ -173,6 +173,19 @@ impl TensorIter {
     /// ```
     #[inline(always)]
     pub fn advance(&mut self) {
+        if !self.done {
+            unsafe {
+                self.advance_unchecked();
+            }
+        }
+    }
+
+    /// Advances to the next logical position, but doesnt check `done` flag but sets it correctly.
+    ///
+    /// # Safety
+    /// Not memory unsafe, but advancing on `done == true` is discouraged.
+    #[inline(always)]
+    pub unsafe fn advance_unchecked(&mut self) {
         // out_shape[i] is never 0 or 1
         // except when scalar iteration (special case)
         let last_dim = self.out_shape.len() - 1;
@@ -233,7 +246,9 @@ impl Iterator for TensorIter {
             return None;
         }
         let res = self.pos.clone();
-        self.advance();
+        unsafe {
+            self.advance_unchecked();
+        }
         Some(res)
     }
 }
@@ -354,7 +369,7 @@ impl IterBuilder {
             Reverse(if self.strides[I][i] == SIZE_ZERO {
                 usize::MAX
             } else {
-                self.strides[I][i] as usize
+                self.strides[I][i]
             })
         });
 
@@ -424,18 +439,17 @@ impl IterBuilder {
     }
 }
 
-macro_rules! tensor_iter {
-    ([$([$($args:expr),*]),*], $skip:expr) => {
-        {
-            let metas = [$(TensorMeta::new(&[$($args),*])),*];
-            TensorIter::new(metas.iter(), $skip)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::TensorIter;
+    macro_rules! tensor_iter {
+        ([$([$($args:expr),*]),*], $skip:expr) => {
+            {
+                let metas = [$(TensorMeta::new(&[$($args),*])),*];
+                TensorIter::new(metas.iter(), $skip)
+            }
+        }
+    }
     use crate::tensor::*;
 
     // #[test]
