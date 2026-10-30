@@ -54,7 +54,7 @@ impl TensorMeta {
     }
 
     pub(crate) fn strides_and_total_elems(shape: &[DimType]) -> (SmallSlice<SizeType>, SizeType) {
-        let mut strides = smallvec![SIZE_ZERO, shape.len()];
+        let mut strides = smallvec![SIZE_ZERO; shape.len()];
         let mut total_elems = 1;
 
         if shape.contains(&DIM_ZERO) {
