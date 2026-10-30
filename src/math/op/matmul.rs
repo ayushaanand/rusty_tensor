@@ -2,8 +2,8 @@ use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::{TensorFType, TensorResult};
 use crate::iterator::TensorIter;
 use crate::math::{Expr, Var, op};
-use crate::shared_types::{Shared, SharedSlice};
 use crate::tensor::TensorMeta;
+use crate::types::{Shared, SharedSlice};
 use std::array;
 
 pub fn mm<T: TensorFType>(

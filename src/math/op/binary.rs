@@ -3,9 +3,9 @@ use crate::consts::*;
 use crate::iterator::TensorIter;
 use crate::math::op::BinaryOp;
 use crate::math::{Expr, Var, op::Op};
-use crate::shared_types;
-use crate::shared_types::Shared;
 use crate::tensor::TensorMeta;
+use crate::types;
+use crate::types::Shared;
 use Op::{Add, Mul, Sub};
 
 pub fn build_binary_op<T: TensorFType>(
@@ -33,7 +33,7 @@ pub fn build_binary_op<T: TensorFType>(
     let total_elems = out_meta.total_elems;
     let requires_grad = inputs.iter().any(|expr| expr.var.requires_grad);
     let grad = if requires_grad {
-        Some(shared_types::SharedSlice::zeroes(total_elems))
+        Some(types::SharedSlice::zeroes(total_elems))
     } else {
         None
     };
@@ -41,7 +41,7 @@ pub fn build_binary_op<T: TensorFType>(
     let expr = Expr {
         var: Var {
             meta: out_meta,
-            data: shared_types::SharedSlice::zeroes(total_elems),
+            data: types::SharedSlice::zeroes(total_elems),
             requires_grad,
         },
         grad,

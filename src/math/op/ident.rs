@@ -1,10 +1,9 @@
 use crate::consts::*;
-use crate::iterator::TensorIter;
 use crate::math::{
     Expr, Var,
-    op::{IdentOp, Op::Ident},
+    op::{IdentOp, Op},
 };
-use crate::shared_types::{Shared, SharedSlice};
+use crate::types::{Shared, SharedSlice};
 
 pub fn ident<T: TensorFType>(
     input: &Shared<Var<T>>,
@@ -12,10 +11,8 @@ pub fn ident<T: TensorFType>(
 ) -> TensorResult<Shared<Expr<T>>> {
     let borrow = input.borrow();
 
-    let it = TensorIter::new([&borrow.meta], 0)?;
-    let op = Ident(IdentOp {
+    let op = Op::Ident(IdentOp {
         input: input.clone(),
-        it,
     });
 
     let grad = if requires_grad {
@@ -23,16 +20,14 @@ pub fn ident<T: TensorFType>(
     } else {
         None
     };
-    let expr = Expr {
+
+    Ok(Shared::new(Expr {
         var: Var {
-            meta: borrow.meta.clone(),
-            data: borrow.data.clone(),
             requires_grad,
+            ..borrow.clone()
         },
         grad,
         op,
         retain_data: false,
-    };
-
-    Ok(Shared::new(expr))
+    }))
 }

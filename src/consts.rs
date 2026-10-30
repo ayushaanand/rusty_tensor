@@ -1,19 +1,14 @@
-pub const SMALL_SIZE: usize = 8;
-
 /// Represents a single dimension value (max 255 per axis).
 /// If testing, make sure to update PY_DIM_TYPE below.
 pub type DimType = u8;
 /// Zero-value sentinel for `DimType`.
 pub const DIM_ZERO: DimType = 0 as DimType;
-pub type SmallDimVec = smallvec::SmallVec<[DimType; SMALL_SIZE]>;
 
 /// Represents flat memory positions, strides, and element counts.
 /// If testing, make sure to update PY_SIZE_TYPE below.
 pub type SizeType = usize;
 /// Zero-value sentinel for `SizeType`.
 pub const SIZE_ZERO: SizeType = 0 as SizeType;
-pub type SmallSizeVec = smallvec::SmallVec<[SizeType; SMALL_SIZE]>;
-
 /// Unified super-trait for all valid tensor element types.
 ///
 /// Blanket-implemented for any `T` satisfying [`Num`](num_traits::Num) + [`Clone`](Clone) +
@@ -23,19 +18,16 @@ pub type SmallSizeVec = smallvec::SmallVec<[SizeType; SMALL_SIZE]>;
 ///
 /// Valid concrete types include: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`,
 /// `i64`, `f32`, `f64`.
-trait ExtraNumericTraits: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign {}
-impl<T> ExtraNumericTraits for T where
-    T: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign
-{
-}
+trait PvtSuperTraits: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign {}
+impl<T> PvtSuperTraits for T where T: Clone + Copy + Display + Sum + Product + AddAssign + SubAssign {}
 
 #[allow(private_bounds)]
-pub trait TensorDType: num_traits::Num + ExtraNumericTraits {}
-impl<T> TensorDType for T where T: num_traits::Num + ExtraNumericTraits {}
+pub trait TensorDType: num_traits::Num + PvtSuperTraits {}
+impl<T> TensorDType for T where T: num_traits::Num + PvtSuperTraits {}
 
 #[allow(private_bounds)]
-pub trait TensorFType: num_traits::Float + ExtraNumericTraits {}
-impl<T> TensorFType for T where T: num_traits::Float + ExtraNumericTraits {}
+pub trait TensorFType: num_traits::Float + PvtSuperTraits {}
+impl<T> TensorFType for T where T: num_traits::Float + PvtSuperTraits {}
 
 use crate::error::TensorError;
 use std::fmt::Display;

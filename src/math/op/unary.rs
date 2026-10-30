@@ -2,8 +2,8 @@ use crate::consts::*;
 use crate::iterator::TensorIter;
 use crate::math::Expr;
 use crate::math::op::*;
-use crate::shared_types::SharedSlice;
 use crate::tensor::TensorMeta;
+use crate::types::SharedSlice;
 
 pub fn build_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
@@ -30,18 +30,15 @@ pub fn build_unary_op<T: TensorFType>(
         None
     };
 
-    let expr = Expr {
+    Ok(Shared::new(Expr {
         var: Var {
-            meta: borrow_input.var.meta.clone(),
             data: SharedSlice::zeroes(total_elems),
-            requires_grad: borrow_input.var.requires_grad,
+            ..borrow_input.var.clone()
         },
         grad,
         op,
         retain_data,
-    };
-
-    Ok(Shared::new(expr))
+    }))
 }
 
 fn relu<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>> {

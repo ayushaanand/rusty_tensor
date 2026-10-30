@@ -2,7 +2,7 @@ use crate::consts::*;
 use crate::math::Expr;
 use crate::math::op::unary::build_unary_op;
 use crate::math::op::{CustomUnaryOp, Op};
-use crate::shared_types::Shared;
+use crate::types::Shared;
 
 fn build_custom_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,

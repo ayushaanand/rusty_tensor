@@ -5,14 +5,14 @@ pub mod consts;
 pub mod error;
 pub mod iterator;
 mod math;
-mod shared_types;
 pub mod tensor;
+mod types;
 
 #[macro_export]
 macro_rules! make_args {
     ($($arg:tt),*) => {
         {
-            let new_args: [SmallDimVec; _] = [$(smallvec!$arg),*];
+            let new_args: [SmallSlice<_>; _] = [$(smallvec!$arg),*];
             new_args
         }
     };

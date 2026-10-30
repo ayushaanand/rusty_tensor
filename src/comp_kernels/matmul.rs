@@ -24,7 +24,7 @@ fn matmul_op_accum<T: TensorDType>(
                 }
             }
         }
-        it.advance();
+        it.advance_unchecked();
     }
 }
 

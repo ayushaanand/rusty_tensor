@@ -1,18 +1,18 @@
 use crate::consts::*;
 
-use smallvec::{SmallVec, smallvec};
-use std::fmt::Debug;
-use std::ops::{Index, IndexMut};
-
 use crate::error::ShapeError;
 use crate::iterator::TensorIter;
+use crate::types::SmallSlice;
+use smallvec::smallvec;
+use std::fmt::Debug;
+use std::ops::{Index, IndexMut};
 
 /// Type-erased metadata describing a tensor's memory layout.
 /// Holds shape, stride, offset, and element count — no data or dtype.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TensorMeta {
-    pub shape: SmallDimVec,
-    pub stride: SmallSizeVec,
+    pub shape: SmallSlice<DimType>,
+    pub stride: SmallSlice<SizeType>,
     pub offset: SizeType,
     pub total_elems: SizeType,
 }
@@ -43,24 +43,30 @@ impl TensorMeta {
     /// assert_eq!(meta.total_elems, 0)
     /// ```
     pub fn new(shape: &[DimType]) -> Self {
-        let mut res = TensorMeta {
-            stride: smallvec![SIZE_ZERO; shape.len()],
-            shape: SmallVec::from(shape),
+        let (stride, total_elems) = Self::strides_and_total_elems(shape);
+
+        TensorMeta {
+            shape: SmallSlice::from(shape),
             offset: SIZE_ZERO,
-            total_elems: 1,
-        };
+            stride,
+            total_elems,
+        }
+    }
 
-        if res.shape.contains(&DIM_ZERO) {
-            res.total_elems = SIZE_ZERO;
-            return res;
+    pub(crate) fn strides_and_total_elems(shape: &[DimType]) -> (SmallSlice<SizeType>, SizeType) {
+        let mut strides = smallvec![SIZE_ZERO, shape.len()];
+        let mut total_elems = 1;
+
+        if shape.contains(&DIM_ZERO) {
+            total_elems = SIZE_ZERO;
+        } else {
+            for (sh, st) in shape.iter().rev().zip(strides.iter_mut().rev()) {
+                *st = total_elems;
+                total_elems *= *sh as SizeType;
+            }
         }
 
-        for (sh, st) in res.shape.iter().rev().zip(res.stride.iter_mut().rev()) {
-            *st = res.total_elems;
-            res.total_elems *= *sh as SizeType;
-        }
-
-        res
+        (strides, total_elems)
     }
 }
 
@@ -153,7 +159,7 @@ pub(crate) mod py_tests {
 
     #[pyfunction(name = "compute_strides")]
     fn py_test_compute_strides(shape: Vec<DimType>) -> Vec<SizeType> {
-        let res = TensorMeta::new(&SmallDimVec::from(shape));
+        let res = TensorMeta::new(&SmallSlice::from(shape));
         res.stride.to_vec()
     }
 }

@@ -1,6 +1,7 @@
 use crate::consts::*;
 use crate::error::*;
 
+use crate::types::SmallSlice;
 use smallvec::smallvec;
 
 /// Computes the broadcasted output shape from an array of shape slices.
@@ -16,7 +17,7 @@ use smallvec::smallvec;
 pub fn compute_broadcast_shape_const<const COUNT: usize>(
     args: [&[DimType]; COUNT],
     skip_dims: usize,
-) -> TensorResult<SmallDimVec> {
+) -> TensorResult<SmallSlice<DimType>> {
     if COUNT == 0 {
         return Err(UnexEmptyInputError);
     };
@@ -25,7 +26,7 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
     if max_rank < skip_dims {
         return Err(SkipDimError);
     }
-    let mut res: SmallDimVec = smallvec![1; max_rank];
+    let mut res: SmallSlice<_> = smallvec![1; max_rank];
 
     // make rev iters on valid slices of args
     let mut iters: [_; COUNT] = args.map(|m| {
@@ -65,7 +66,7 @@ pub fn compute_broadcast_shape_const<const COUNT: usize>(
 pub fn compute_broadcast_shape_iter<'a, I>(
     args_iter: I,
     skip_dims: usize,
-) -> TensorResult<SmallDimVec>
+) -> TensorResult<SmallSlice<DimType>>
 where
     I: Iterator<Item = &'a [DimType]> + Clone,
 {
@@ -78,7 +79,7 @@ where
     if max_rank < skip_dims {
         return Err(SkipDimError);
     }
-    let mut res: SmallDimVec = smallvec![1; max_rank];
+    let mut res: SmallSlice<_> = smallvec![1; max_rank];
 
     let avb_rank = max_rank.saturating_sub(skip_dims);
     let res_it = res[..avb_rank].iter_mut().rev();
@@ -130,7 +131,7 @@ where
 pub fn compute_broadcast_shape<S: AsRef<[DimType]>>(
     args: &[S],
     skip_dims: usize,
-) -> TensorResult<SmallDimVec> {
+) -> TensorResult<SmallSlice<DimType>> {
     compute_broadcast_shape_iter(args.iter().map(|s| s.as_ref()), skip_dims)
 }
 
@@ -140,7 +141,11 @@ mod tests {
     use crate::make_args;
     use smallvec::smallvec;
 
-    fn test_fn<const N: usize>(args: [SmallDimVec; N], skip_dims: usize, res: Option<SmallDimVec>) {
+    fn test_fn<const N: usize>(
+        args: [SmallSlice<DimType>; N],
+        skip_dims: usize,
+        res: Option<SmallSlice<DimType>>,
+    ) {
         let const_args = args.each_ref().map(|f| f.as_slice());
         assert_eq!(compute_broadcast_shape(&const_args, skip_dims).ok(), res);
         assert_eq!(
