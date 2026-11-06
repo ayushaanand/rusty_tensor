@@ -6,12 +6,11 @@ use crate::types::Shared;
 
 fn build_custom_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
-    retain_data: bool,
     f_fwd: fn(T) -> T,
     f_bwd: fn(T) -> T,
     op_var: fn(CustomUnaryOp<T>) -> Op<T>,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_unary_op(input, retain_data, |base| {
+    build_unary_op(input, |base| {
         op_var(CustomUnaryOp {
             u_op: base,
             f_fwd,
@@ -25,7 +24,7 @@ pub fn apply<T: TensorFType>(
     f_fwd: fn(T) -> T,
     f_bwd: fn(T) -> T,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_custom_unary_op(input, true, f_fwd, f_bwd, Op::Apply)
+    build_custom_unary_op(input, f_fwd, f_bwd, Op::Apply)
 }
 
 pub fn apply_no_retain<T: TensorFType>(
@@ -33,5 +32,5 @@ pub fn apply_no_retain<T: TensorFType>(
     f_fwd: fn(T) -> T,
     f_bwd: fn(T) -> T,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_custom_unary_op(input, false, f_fwd, f_bwd, Op::ApplyNoRetain)
+    build_custom_unary_op(input, f_fwd, f_bwd, Op::ApplyNoRetain)
 }

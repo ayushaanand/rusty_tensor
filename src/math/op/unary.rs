@@ -7,7 +7,6 @@ use crate::types::{Shared, SharedSlice};
 
 pub fn build_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
-    retain_data: bool,
     op_var: impl FnOnce(UnaryOp<T>) -> Op<T>,
 ) -> TensorResult<Shared<Expr<T>>> {
     let borrow_input = input.borrow();
@@ -33,14 +32,13 @@ pub fn build_unary_op<T: TensorFType>(
         },
         grad,
         op,
-        retain_data,
     }))
 }
 
 fn relu<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>> {
-    build_unary_op(input, false, Op::ReLu)
+    build_unary_op(input, Op::ReLu)
 }
 
 fn sigmoid<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>> {
-    build_unary_op(input, false, Op::Sigmoid)
+    build_unary_op(input, Op::Sigmoid)
 }

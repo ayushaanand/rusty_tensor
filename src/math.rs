@@ -2,7 +2,6 @@ use crate::consts::*;
 use crate::math::op::Op;
 use crate::tensor::{Tensor, TensorMeta};
 use crate::types::SharedSlice;
-use std::cell::Ref;
 
 mod op;
 
@@ -28,7 +27,6 @@ struct Expr<T: TensorFType> {
     var: Var<T>,
     grad: Option<SharedSlice<T>>, // None only for ident nodes
     op: Op<T>,
-    retain_data: bool, // usage is not currently in scope
 }
 
 impl<T: TensorFType> Expr<T> {
@@ -42,10 +40,10 @@ impl<T: TensorFType> Expr<T> {
 
 impl<T: TensorFType> Expr<T> {
     fn eval_fwd(&mut self) {
-        self.op.fwd(&mut *self.var.data.borrow_mut());
+        self.op.fwd(&mut self.var.data.borrow_mut());
     }
     fn eval_bwd(&mut self) {
         let grad = self.grad.as_ref().unwrap_or(&self.var.data);
-        self.op.bwd(&grad.borrow(), &*self.var.data.borrow());
+        self.op.bwd(&grad.borrow(), &self.var.data.borrow());
     }
 }

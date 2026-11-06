@@ -19,6 +19,5 @@ pub fn ident<T: TensorFType>(
         var: borrow.clone(),
         grad,
         op,
-        retain_data: false,
     }))
 }

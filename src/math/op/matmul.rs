@@ -61,6 +61,5 @@ pub fn mm<T: TensorFType>(
         },
         grad,
         op,
-        retain_data: false,
     }))
 }

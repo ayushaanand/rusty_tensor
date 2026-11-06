@@ -11,7 +11,6 @@ fn build_binary_op<T: TensorFType>(
     a: &Shared<Expr<T>>,
     b: &Shared<Expr<T>>,
     op_var: fn(BinaryOp<T>) -> Op<T>,
-    retain_data: bool,
 ) -> TensorResult<Shared<Expr<T>>> {
     let inputs = [a.borrow(), b.borrow()];
 
@@ -43,7 +42,6 @@ fn build_binary_op<T: TensorFType>(
         },
         grad,
         op,
-        retain_data,
     };
 
     Ok(Shared::new(expr))
@@ -53,21 +51,21 @@ pub fn add<T: TensorFType>(
     a: &Shared<Expr<T>>,
     b: &Shared<Expr<T>>,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_binary_op(a, b, Add, false)
+    build_binary_op(a, b, Add)
 }
 
 pub fn sub<T: TensorFType>(
     a: &Shared<Expr<T>>,
     b: &Shared<Expr<T>>,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_binary_op(a, b, Sub, false)
+    build_binary_op(a, b, Sub)
 }
 
 pub fn mul<T: TensorFType>(
     a: &Shared<Expr<T>>,
     b: &Shared<Expr<T>>,
 ) -> TensorResult<Shared<Expr<T>>> {
-    build_binary_op(a, b, Mul, true)
+    build_binary_op(a, b, Mul)
 }
 
 // ----------- Binary -----------------------------------------------------------------------------
@@ -76,6 +74,19 @@ pub(crate) struct BinaryOp<T: TensorFType> {
     input: [Shared<Expr<T>>; 2],
     it: TensorIter,
 }
+
+// 1. check Rc::ptr_eq since parents may be same
+// 2. if different parents -
+//    a. if both require grad, make a fused loop
+//    b. if only one requires, make it into a separate lambda and index using i and 1-i
+//    c. if none require grad, done
+// 3. else both are same parents, so one parent
+//    a. if parent requires grad, apply both grads at once
+//    b. else done
+//
+// pos[0] is for output
+// pos[i -> 1..=2] are inputs and pos[1 + i] is for parent[i]
+// contract logic but indexing i and 1-i in - for i in 0..2
 
 impl<T: TensorFType> BinaryOp<T> {
     pub(super) fn fwd<F: Fn(T, T) -> T>(&mut self, out: &mut [T], f: F) {
@@ -192,7 +203,7 @@ impl<T: TensorFType> BinaryOp<T> {
 
                     self.it.for_each(|pos| {
                         for i in 0..2 {
-                            parent_grads[i][pos[1 + (i)]] =
+                            parent_grads[i][pos[1 + (i)]] +=
                                 grad[pos[0]] * parent_datas[1 - i][pos[1 + (1 - i)]];
                         }
                     })

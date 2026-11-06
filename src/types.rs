@@ -1,7 +1,6 @@
-use crate::consts::TensorDType;
 use num_traits::Zero;
-use std::cell::{Ref, RefCell, RefMut, UnsafeCell};
-use std::ops::{Deref, Index};
+use std::cell::{Ref, RefCell, RefMut};
+use std::ops::Deref;
 use std::rc::Rc;
 
 // --------- Shared<T> -----------------------------------------------------------------
@@ -22,6 +21,7 @@ impl<T> Shared<T> {
     }
 }
 
+// use std::cell::UnsafeCell
 // pub(crate) struct Shared<T>(Rc<UnsafeCell<T>>);
 //
 // impl<T> Shared<T> {
