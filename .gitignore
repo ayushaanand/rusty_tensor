@@ -16,6 +16,9 @@ target
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 
+# jetbrains
+.idea
+
 # hypothesis files
 .hypothesis/
 /tests/__pycache__/

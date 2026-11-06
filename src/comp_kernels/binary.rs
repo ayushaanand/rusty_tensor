@@ -45,9 +45,9 @@ mod tests {
         binary_op_accum(&mut t3.data, &t1.data, &t2.data, &mut it, |a, b| a + b);
 
         it.reset();
-        for i in it {
-            assert_eq!(t3[i[0]], t1[i[1]] + t2[i[2]]);
-        }
+        it.for_each(|i| {
+            assert_eq!(t3.data[i[0]], t1.data[i[1]] + t2.data[i[2]]);
+        });
     }
 
     #[test]
@@ -61,9 +61,9 @@ mod tests {
         binary_op_accum(&mut t3.data, &t1.data, &t2.data, &mut it, |a, b| a ^ b);
 
         it.reset();
-        for i in it {
-            assert_eq!(t3[i[0]], 3 * (t1[i[1]] ^ t2[i[2]]));
-        }
+        it.for_each(|i| {
+            assert_eq!(t3.data[i[0]], 3 * (t1.data[i[1]] ^ t2.data[i[2]]));
+        });
     }
 
     #[test]
@@ -79,8 +79,8 @@ mod tests {
         });
 
         it.reset();
-        for i in it {
-            assert_eq!(t3[i[0]], t1[i[1]].exp() + t2[i[2]]);
-        }
+        it.for_each(|i| {
+            assert_eq!(t3.data[i[0]], t1.data[i[1]].exp() + t2.data[i[2]]);
+        });
     }
 }

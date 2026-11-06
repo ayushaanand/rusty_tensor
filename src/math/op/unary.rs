@@ -1,9 +1,9 @@
 use crate::consts::*;
 use crate::iterator::TensorIter;
-use crate::math::Expr;
 use crate::math::op::*;
+use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
-use crate::types::SharedSlice;
+use crate::types::{Shared, SharedSlice};
 
 pub fn build_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
@@ -16,19 +16,15 @@ pub fn build_unary_op<T: TensorFType>(
 
     let it = TensorIter::new([&out_meta, &borrow_input.var.meta], 0)?;
 
-    let u_op = UnaryOp {
+    let op = op_var(UnaryOp {
         input: input.clone(),
         it,
-    };
-
-    let op = op_var(u_op);
+    });
 
     let total_elems = borrow_input.var.meta.total_elems;
-    let grad = if borrow_input.var.requires_grad {
-        Some(SharedSlice::zeroes(total_elems))
-    } else {
-        None
-    };
+    let grad = borrow_input
+        .requires_grad()
+        .then(|| SharedSlice::zeroes(total_elems));
 
     Ok(Shared::new(Expr {
         var: Var {

@@ -9,9 +9,9 @@ fn build_view_op<T: TensorFType>(
     new_meta: TensorMeta,
     op_var: impl FnOnce(ViewOp<T>) -> Op<T>,
 ) -> Shared<Expr<T>> {
-    let op = ViewOp {
+    let op = op_var(ViewOp {
         input: input.clone(),
-    };
+    });
 
     let borrow = input.borrow();
     Shared::new(Expr {
@@ -19,6 +19,7 @@ fn build_view_op<T: TensorFType>(
             meta: new_meta,
             ..borrow.var.clone()
         },
+        op,
         ..borrow.clone()
     })
 }
@@ -31,5 +32,5 @@ pub fn transpose<T: TensorFType>(input: &Shared<Expr<T>>, i: usize, j: usize) ->
     (new_meta.stride, new_meta.total_elems) =
         TensorMeta::strides_and_total_elems(new_meta.shape.as_slice());
 
-    build_view_op(&input, new_meta, Op::Transpose)
+    build_view_op(input, new_meta, Op::Transpose)
 }

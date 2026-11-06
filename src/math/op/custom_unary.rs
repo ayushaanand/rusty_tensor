@@ -1,6 +1,6 @@
+use super::unary::build_unary_op;
 use crate::consts::*;
 use crate::math::Expr;
-use crate::math::op::unary::build_unary_op;
 use crate::math::op::{CustomUnaryOp, Op};
 use crate::types::Shared;
 

@@ -1,4 +1,4 @@
-use crate::consts::{DimType, TensorDType};
+use crate::consts::TensorDType;
 use crate::iterator::TensorIter;
 
 fn matmul_op_accum<T: TensorDType>(
@@ -6,11 +6,10 @@ fn matmul_op_accum<T: TensorDType>(
     t_a: &[T],
     t_b: &[T],
     it: &mut TensorIter,
-    m: DimType,
-    p: DimType,
-    n: DimType,
+    m: usize,
+    p: usize,
+    n: usize,
 ) {
-    let (m, p, n) = (m as usize, p as usize, n as usize);
     it.reset();
     while !it.done {
         let r_o = it.pos[0];

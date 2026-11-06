@@ -1,10 +1,9 @@
-use std::cmp::Reverse;
-use smallvec::SmallVec;
 use crate::broadcast::compute_broadcast_shape_iter;
 use crate::consts::*;
 use crate::error::*;
 use crate::tensor::{Tensor, TensorMeta};
-use crate::types::{SmallSlice, SMALL_SIZE};
+use crate::types::SmallSlice;
+use std::cmp::Reverse;
 
 /// A pre-optimized, multi-tensor flat-index iterator.
 ///
@@ -89,7 +88,7 @@ impl TensorIter {
     /// assert!(TensorIter::new([&a, &b], 3).is_err()); // skip_dims > rank
     ///
     /// let c = TensorMeta::new(&[4, 3]); // incompatible with a on dim 0
-    /// assert!(TensorIter::new([&a, &c], 0).is_err());
+    /// assert!(TensorIter::new([a, c].each_ref(), 0).is_err());
     /// ```
     pub fn new<'a, I>(args: I, skip_dims: usize) -> TensorResult<Self>
     where
@@ -160,7 +159,7 @@ impl TensorIter {
     /// Advances to the next logical position, updating all entries in `pos`.
     ///
     /// Sets `done` when the last element has been passed.
-    /// If sure about `done` being false, use [`advance_unchecked`](crate::iterator::TensorIter::advance_uncheked)
+    /// If sure about `done` being false, use [`advance_unchecked`](TensorIter::advance_unchecked)
     ///
     /// # Example
     /// ```
@@ -178,7 +177,7 @@ impl TensorIter {
         }
     }
 
-    /// Advances to the next logical position, but doesnt check `done` flag but sets it correctly.
+    /// Advances to the next logical position, but doesn't check `done` flag but sets it correctly.
     #[inline(always)]
     pub fn advance_unchecked(&mut self) {
         // out_shape[i] is never 0 or 1
@@ -230,19 +229,13 @@ impl TensorIter {
     }
 }
 
-/// Yields a clone of [`pos`](TensorIter::pos) for each element visited.
-/// Prefer the `while !done` loop in performance-critical code to avoid cloning.
-impl Iterator for TensorIter {
-    type Item = SmallSlice<SizeType>;
-
-    #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
+impl TensorIter {
+    pub fn for_each(&mut self, mut f: impl FnMut(&[SizeType])) {
+        self.reset();
+        while !self.done {
+            f(self.pos.as_slice());
+            self.advance_unchecked();
         }
-        let res = self.pos.clone();
-        self.advance_unchecked();
-        Some(res)
     }
 }
 
@@ -288,7 +281,7 @@ impl IterBuilder {
             .clone()
             .map(|m| Self::make_padded(&m.shape, 1 as DimType, avb_dims, skip_dims))
             .collect();
-        let strides: SmallSlice<SmallSlice<SizeType>> = args
+        let strides = args
             .clone()
             .map(|m| Self::make_padded(&m.stride, SIZE_ZERO, avb_dims, skip_dims))
             .collect();
@@ -435,6 +428,8 @@ impl IterBuilder {
 #[cfg(test)]
 mod tests {
     use super::TensorIter;
+    use crate::consts::DimType;
+    use smallvec::smallvec;
     macro_rules! tensor_iter {
         ([$([$($args:expr),*]),*], $skip:expr) => {
             {
@@ -444,13 +439,19 @@ mod tests {
         }
     }
     use crate::tensor::*;
+    use crate::types::SmallSlice;
 
-    // #[test]
-    // fn test_example_use() {
-    //     let shapes: [SmallSlice<DimType>; _] = [smallvec![2, 3, 4], smallvec![2, 1, 4], smallvec![4], smallvec![]]; // get your shapes
-    //     let shared_tensors: [SharedTensor<i32>; _] = shapes.map(|s| Tensor::new(s, 3)); // get your tensors,
-    //     let borrowed_tensors = shared_tensors.each_ref().map(|t| t.borrow()); // borrow at runtime
-    // }
+    #[test]
+    fn test_example_use() {
+        let shapes: [SmallSlice<DimType>; _] = [
+            smallvec![2, 3, 4],
+            smallvec![2, 1, 4],
+            smallvec![4],
+            smallvec![],
+        ]; // get your shapes
+        let tensors: [Tensor<i32>; _] = shapes.map(|s| Tensor::new(&s, 3)); // get your tensors,
+        let _ = TensorIter::new(tensors.each_ref().map(|t| &t.meta), 0).unwrap();
+    }
 
     #[test]
     fn test_empty() {
@@ -473,14 +474,14 @@ mod tests {
     #[test]
     fn test_skip_dims() {
         assert!(tensor_iter!([[1]], 0).is_ok());
-        // assert!(tensor_iter!([[1]], 1).is_ok());
-        // assert!(tensor_iter!([[1]], 2).is_err());
-        //
-        // assert!(tensor_iter!([[2, 2, 2], []], 2).is_ok());
-        // assert!(tensor_iter!([[2, 2, 2], [2]], 3).is_ok());
-        // assert!(tensor_iter!([[2, 2, 2], []], 4).is_err());
-        // assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 3).is_ok());
-        // assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 4).is_err());
+        assert!(tensor_iter!([[1]], 1).is_ok());
+        assert!(tensor_iter!([[1]], 2).is_err());
+
+        assert!(tensor_iter!([[2, 2, 2], []], 2).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], [2]], 3).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], []], 4).is_err());
+        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 3).is_ok());
+        assert!(tensor_iter!([[2, 2, 2], [1, 2], [2], []], 4).is_err());
     }
 
     #[test]
@@ -493,15 +494,11 @@ mod tests {
         }
         {
             let odo = tensor_iter!([[2, 2], [2], [2, 1]], 0).unwrap();
-            assert_eq!(odo.out_shape.len(), 2);
-            assert_eq!(odo.out_shape[0], 2);
-            assert_eq!(odo.out_shape[1], 2);
-            assert_eq!(odo.arg_strides[0][0], 2);
-            assert_eq!(odo.arg_strides[0][1], 1);
-            assert_eq!(odo.arg_strides[1][0], 0);
-            assert_eq!(odo.arg_strides[1][1], 1);
-            assert_eq!(odo.arg_strides[2][0], 1);
-            assert_eq!(odo.arg_strides[2][1], 0);
+            assert_eq!(odo.out_shape.as_slice(), &[2, 2]);
+
+            assert_eq!(odo.arg_strides[0].as_slice(), &[2, 1]);
+            assert_eq!(odo.arg_strides[1].as_slice(), &[0, 1]);
+            assert_eq!(odo.arg_strides[2].as_slice(), &[1, 0]);
         }
     }
 
@@ -509,12 +506,13 @@ mod tests {
     #[rustfmt::skip]
     fn test_iter() {
         let mut odo = tensor_iter!([[2, 2], [1, 2], [2, 1]], 0).unwrap();
-        assert_eq!(odo.pos[0], 0); assert_eq!(odo.pos[1], 0); assert_eq!(odo.pos[2], 0); assert_eq!(odo.done, false); odo.advance();
-        assert_eq!(odo.pos[0], 1); assert_eq!(odo.pos[1], 1); assert_eq!(odo.pos[2], 0); assert_eq!(odo.done, false); odo.advance();
-        assert_eq!(odo.pos[0], 2); assert_eq!(odo.pos[1], 0); assert_eq!(odo.pos[2], 1); assert_eq!(odo.done, false); odo.advance();
-        assert_eq!(odo.pos[0], 3); assert_eq!(odo.pos[1], 1); assert_eq!(odo.pos[2], 1); assert_eq!(odo.done, false); odo.advance();
+        assert_eq!(odo.pos.as_slice(), &[0, 0, 0]); assert_eq!(odo.done, false); odo.advance();
+        assert_eq!(odo.pos.as_slice(), &[1, 1, 0]); assert_eq!(odo.done, false); odo.advance();
+        assert_eq!(odo.pos.as_slice(), &[2, 0, 1]); assert_eq!(odo.done, false); odo.advance();
+        assert_eq!(odo.pos.as_slice(), &[3, 1, 1]); assert_eq!(odo.done, false); odo.advance();
         assert_eq!(odo.done, true);
         odo.reset();
-        assert_eq!(odo.pos[0], 0); assert_eq!(odo.pos[1], 0); assert_eq!(odo.pos[2], 0); assert_eq!(odo.done, false);
+
+        assert_eq!(odo.pos.as_slice(), &[0, 0, 0]); assert_eq!(odo.done, false);
     }
 }

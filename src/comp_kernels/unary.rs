@@ -38,10 +38,9 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_assign(&mut t2.data, &t1.data, &mut it, |i| i);
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], t1.data[i[1]]);
-        }
+        });
     }
 
     #[test]
@@ -50,10 +49,9 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_assign(&mut t2.data, &t1.data, &mut it, |i| -i);
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], -t1.data[i[1]]);
-        }
+        });
     }
 
     #[test]
@@ -62,10 +60,9 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5f32);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_assign(&mut t2.data, &t1.data, &mut it, |f| f.exp());
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], t1.data[i[1]].exp());
-        }
+        });
     }
 
     #[test]
@@ -74,10 +71,9 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5f32);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_assign(&mut t2.data, &t1.data, &mut it, |f| f.powf(3.0));
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], t1.data[i[1]].powf(3.0));
-        }
+        });
     }
 
     #[test]
@@ -86,10 +82,9 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5f32);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_accum(&mut t2.data, &t1.data, &mut it, |f| f.powf(3.0));
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], 5f32 + t1.data[i[1]].powf(3.0));
-        }
+        });
     }
 
     #[test]
@@ -98,9 +93,8 @@ mod tests {
         let mut t2 = Tensor::new(&[5, 2, 3], 5i32);
         let mut it = TensorIter::from_tensors([&t2, &t1], 0).unwrap();
         unary_op_accum(&mut t2.data, &t1.data, &mut it, |i| -i);
-        it.reset();
-        for i in it {
+        it.for_each(|i| {
             assert_eq!(t2.data[i[0]], 5 - 3 * t1.data[i[1]]);
-        }
+        });
     }
 }

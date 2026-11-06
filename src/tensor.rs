@@ -5,7 +5,6 @@ use crate::iterator::TensorIter;
 use crate::types::SmallSlice;
 use smallvec::smallvec;
 use std::fmt::Debug;
-use std::ops::{Index, IndexMut};
 
 /// Type-erased metadata describing a tensor's memory layout.
 /// Holds shape, stride, offset, and element count — no data or dtype.
@@ -106,7 +105,7 @@ impl<T: TensorDType> Tensor<T> {
     /// Returns the element at the given flat index, or `None` if out of bounds.
     pub fn get(&mut self, idx: SizeType) -> Option<T> {
         if idx < self.meta.total_elems {
-            Some(self[idx])
+            Some(self.data[idx])
         } else {
             None
         }
@@ -123,7 +122,7 @@ impl<T: TensorDType> Tensor<T> {
             if it.done {
                 break;
             } else {
-                t[it.pos[0]] = i;
+                t.data[it.pos[0]] = i;
                 it.advance()
             }
         }
@@ -134,20 +133,6 @@ impl<T: TensorDType> Tensor<T> {
     pub fn unsqueeze(&mut self, dim: usize) {
         self.meta.shape.insert(dim, 1);
         self.meta.stride.insert(dim, SIZE_ZERO);
-    }
-}
-
-impl<T: TensorDType> Index<usize> for Tensor<T> {
-    type Output = T;
-
-    fn index(&self, idx: usize) -> &Self::Output {
-        &self.data[idx]
-    }
-}
-
-impl<T: TensorDType> IndexMut<usize> for Tensor<T> {
-    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
-        &mut self.data[idx]
     }
 }
 
