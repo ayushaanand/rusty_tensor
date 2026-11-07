@@ -4,6 +4,13 @@ use crate::math::Expr;
 use crate::math::op::Op;
 use crate::types::Shared;
 
+#[derive(Clone)]
+pub(crate) struct CustomUnaryOp<T: TensorFType> {
+    u_op: UnaryOp<T>,
+    f: fn(T) -> T,
+    f_dash: fn(T) -> T,
+}
+
 fn build_custom_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
     f: fn(T) -> T,
@@ -25,15 +32,6 @@ pub fn apply<T: TensorFType>(
     f_dash: fn(T) -> T,
 ) -> TensorResult<Shared<Expr<T>>> {
     build_custom_unary_op(input, f, f_dash, Op::Apply)
-}
-
-// --------- CustomUnary --------------------------------------------------------------
-
-#[derive(Clone)]
-pub(crate) struct CustomUnaryOp<T: TensorFType> {
-    u_op: UnaryOp<T>,
-    f: fn(T) -> T,
-    f_dash: fn(T) -> T,
 }
 
 impl<T: TensorFType> CustomUnaryOp<T> {

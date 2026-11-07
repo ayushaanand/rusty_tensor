@@ -217,14 +217,12 @@ pub(crate) mod py_tests {
     use super::compute_broadcast_shape;
     use crate::consts::DimType;
     use pyo3::prelude::*;
-    use smallvec::smallvec;
 
     #[pyfunction(name = "compute_broadcast_shape")]
     fn py_test_compute_broadcast_shape(args: Vec<Vec<DimType>>) -> Vec<DimType> {
-        if args.len() == 0 {
-            return vec![];
+        if args.is_empty() {
+            return Default::default();
         }
-        let res = compute_broadcast_shape(&args, 0).unwrap_or(smallvec![]);
-        res.to_vec()
+        compute_broadcast_shape(&args, 0).unwrap_or_default().to_vec()
     }
 }

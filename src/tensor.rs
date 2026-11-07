@@ -69,6 +69,13 @@ impl TensorMeta {
     }
 }
 
+impl TensorMeta {
+    pub fn transpose(&mut self, i: usize, j: usize) {
+        self.shape.swap(i, j);
+        self.stride.swap(i, j);
+    }
+}
+
 /// A multidimensional strided tensor, which supports all numerical types, backed by a `Box<[T]>`,
 /// so number of elems cant be changed later.
 /// Supports dtype which implements the [`TensorDType`](TensorDType) trait (eg, i32, f64, etc.)

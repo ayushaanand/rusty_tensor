@@ -5,6 +5,12 @@ use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
 use crate::types::{Shared, SharedSlice};
 
+#[derive(Clone)]
+pub(crate) struct UnaryOp<T: TensorFType> {
+    input: Shared<Expr<T>>,
+    it: TensorIter,
+}
+
 pub fn build_unary_op<T: TensorFType>(
     input: &Shared<Expr<T>>,
     op_var: impl FnOnce(UnaryOp<T>) -> Op<T>,
@@ -47,13 +53,6 @@ fn sigmoid<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<
     build_unary_op(input, Op::Sigmoid)
 }
 
-// -------- Unary -------------------------------------------------------------------------
-#[derive(Clone)]
-pub(crate) struct UnaryOp<T: TensorFType> {
-    input: Shared<Expr<T>>,
-    it: TensorIter,
-}
-
 impl<T: TensorFType> UnaryOp<T> {
     pub(super) fn fwd<F: Fn(T) -> T>(&mut self, out: &mut [T], f: F) {
         let borrow = self.input.borrow();
@@ -75,4 +74,20 @@ impl<T: TensorFType> UnaryOp<T> {
             });
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::math::op::ident::ident;
+    use crate::tensor::Tensor;
+
+    // #[test]
+    // fn test_relu() {
+    //     let e1 = ident(&Shared::new(Var::from(
+    //         Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f64)).unwrap())),
+    //         true
+    //     );
+    //     let e2 = relu()
+    // }
 }

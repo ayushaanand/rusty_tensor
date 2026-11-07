@@ -76,7 +76,7 @@ impl<T: TensorFType> Op<T> {
 
             Op::Apply(op) => op.bwd(grad, out_val),
 
-            Op::MatMul(op) => op.bwd(grad, out_val),
+            Op::MatMul(op) => op.bwd(grad),
 
             _ => {
                 unreachable!()

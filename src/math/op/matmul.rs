@@ -5,7 +5,17 @@ use crate::iterator::TensorIter;
 use crate::math::{Expr, Var, op};
 use crate::tensor::TensorMeta;
 use crate::types::{Shared, SharedSlice};
-use std::array;
+use std::rc::Rc;
+
+#[derive(Clone)]
+pub(crate) struct MatMulOp<T: TensorFType> {
+    a: Shared<Expr<T>>,
+    b: Shared<Expr<T>>,
+    it: TensorIter,
+
+    // m*p @ p*n -> (m, p, n)
+    mat_dims: (usize, usize, usize),
+}
 
 pub fn mm<T: TensorFType>(
     a: &Shared<Expr<T>>,
@@ -14,8 +24,8 @@ pub fn mm<T: TensorFType>(
     const SKIP: usize = 2;
 
     let inputs = [a.borrow(), b.borrow()];
-    let shapes: [_; 2] = array::from_fn(|i| inputs[i].var.meta.shape.as_slice());
-    let lens: [_; 2] = array::from_fn(|i| inputs[i].var.meta.shape.len());
+    let shapes: [_; 2] = inputs.each_ref().map(|expr| expr.var.meta.shape.as_slice());
+    let lens: [_; 2] = shapes.each_ref().map(|sh| sh.len());
 
     let mut out_shape = compute_broadcast_shape_const(shapes, SKIP)?;
     let out_len = out_shape.len();
@@ -33,19 +43,18 @@ pub fn mm<T: TensorFType>(
     out_shape[out_len - 2] = m;
     out_shape[out_len - 1] = n;
     let out_meta = TensorMeta::new(out_shape.as_slice());
+
     let it = TensorIter::new(
         std::iter::once(&out_meta).chain(inputs.iter().map(|expr| &expr.var.meta)),
         SKIP,
     )?;
 
-    let (m, p, n) = (m as usize, p as usize, n as usize);
+    let mat_dims = (m as usize, p as usize, n as usize);
     let op = op::Op::MatMul(MatMulOp {
         a: a.clone(),
         b: b.clone(),
-        m,
-        p,
-        n,
         it,
+        mat_dims,
     });
 
     let grad = inputs
@@ -63,14 +72,323 @@ pub fn mm<T: TensorFType>(
     }))
 }
 
-#[derive(Clone)]
-pub(crate) struct MatMulOp<T: TensorFType> {
-    a: Shared<Expr<T>>,
-    b: Shared<Expr<T>>,
-    it: TensorIter,
+impl<T: TensorFType> MatMulOp<T> {
+    fn mm_loop<F: FnMut([usize; 6])>(
+        it: &mut TensorIter,
+        mat_dims: (usize, usize, usize),
+        mut f: F,
+    ) {
+        let (m, p, n) = mat_dims;
+        it.for_each(|pos| {
+            let r_o = pos[0];
+            let a_o = pos[1];
+            let b_o = pos[2];
+            for i in 0..m {
+                for k in 0..p {
+                    for j in 0..n {
+                        f([r_o, a_o, b_o, i, j, k]);
+                    }
+                }
+            }
+        });
+    }
 
-    // m*p @ p*n
-    m: usize,
-    p: usize,
-    n: usize,
+    pub(crate) fn fwd(&mut self, out: &mut [T]) {
+        let borrow_a = self.a.borrow();
+        let borrow_b = self.b.borrow();
+
+        let a_data = borrow_a.var.data.borrow();
+        let b_data = borrow_b.var.data.borrow();
+
+        let (_, p, n) = self.mat_dims;
+        Self::mm_loop(&mut self.it, self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
+            out[r_o + i * n + j] += a_data[a_o + i * p + k] * b_data[b_o + k * n + j];
+        });
+    }
+
+    pub(crate) fn bwd(&mut self, grad: &[T]) {
+        let (_, p, n) = self.mat_dims;
+        if !Rc::ptr_eq(self.a.as_rc(), self.b.as_rc()) {
+            let borrow_a = self.a.borrow();
+            let borrow_b = self.b.borrow();
+
+            let a_data = borrow_a.var.data.borrow();
+            let b_data = borrow_b.var.data.borrow();
+
+            match (borrow_a.requires_grad(), borrow_b.requires_grad()) {
+                (true, true) => {
+                    let mut a_grad = borrow_a.get_grad().borrow_mut();
+                    let mut b_grad = borrow_b.get_grad().borrow_mut();
+
+                    Self::mm_loop(&mut self.it, self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
+                        a_grad[a_o + i * p + k] += grad[r_o + i * n + j] * b_data[b_o + k * n + j]; // grad_A = grad @ B^T
+                        b_grad[b_o + k * n + j] += a_data[a_o + i * p + k] * grad[r_o + i * n + j]; // grad_B = A^T @ grad
+                    });
+                }
+                (true, false) => {
+                    let mut a_grad = borrow_a.get_grad().borrow_mut();
+
+                    Self::mm_loop(&mut self.it, self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
+                        a_grad[a_o + i * p + k] += grad[r_o + i * n + j] * b_data[b_o + k * n + j];
+                    });
+                }
+                (false, true) => {
+                    let mut b_grad = borrow_b.get_grad().borrow_mut();
+
+                    Self::mm_loop(&mut self.it, self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
+                        b_grad[b_o + k * n + j] += a_data[a_o + i * p + k] * grad[r_o + i * n + j];
+                    });
+                }
+                (false, false) => {}
+            }
+        } else {
+            let borrow = self.a.borrow();
+            let parent_data = borrow.var.data.borrow();
+            if borrow.requires_grad() {
+                let mut parent_grad = borrow.get_grad().borrow_mut();
+                Self::mm_loop(&mut self.it, self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
+                    parent_grad[a_o + i * p + k] +=
+                        grad[r_o + i * n + j] * parent_data[b_o + k * n + j];
+                    parent_grad[b_o + k * n + j] +=
+                        parent_data[a_o + i * p + k] * grad[r_o + i * n + j];
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::math::op::ident::ident;
+    use crate::tensor::Tensor;
+    use std::iter::repeat_n;
+
+    #[macro_export]
+    macro_rules! assert_allclose {
+        ($left:expr, $right:expr) => {
+            assert_allclose!($left, $right, 1e-6, 1e-6);
+        };
+        ($left:expr, $right:expr, $atol:expr, $rtol:expr) => {{
+            assert_eq!(
+                $left.len(),
+                $right.len(),
+                "Length mismatch: left has len {}, right has len {}",
+                $left.len(),
+                $right.len()
+            );
+            for (i, (&a, &b)) in $left.iter().zip($right.iter()).enumerate() {
+                let diff = (a - b).abs();
+                let tol = $atol + $rtol * b.abs();
+                assert!(
+                    diff <= tol,
+                    "Float mismatch at index {}:\n  left:  {}\n right:  {}\n  diff:  {} > tol {}",
+                    i,
+                    a,
+                    b,
+                    diff,
+                    tol
+                );
+            }
+        }};
+    }
+
+    fn repeat_slice<T: Copy>(slice: &[T], n: usize) -> Vec<T> {
+        repeat_n(slice, n).flatten().copied().collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn test_matmul() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+        let e2 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+
+        let e3 = mm(&e1, &e2).unwrap();
+        assert!(e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[2, 2]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut()
+            .grad
+            .as_mut()
+            .unwrap()
+            .borrow_mut()
+            .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
+        e3.borrow_mut().eval_bwd();
+
+        assert_eq!(&**e3.borrow().var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+        assert_allclose!(
+            &**e1.borrow().get_grad().borrow(),
+            &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]
+        );
+        assert_allclose!(
+            &**e2.borrow().get_grad().borrow(),
+            &[3.5, 0.2, 4.0, 0.1, 4.5, 0.0]
+        );
+    }
+
+    #[test]
+    fn test_matmul_broadcast() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[3, 2, 3], repeat_n((1..=6).map(|i| i as f32), 3).flatten())
+                    .unwrap(),
+            )),
+            true,
+        );
+        let e2 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+
+        let e3 = mm(&e1, &e2).unwrap();
+        assert!(e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[3, 2, 2]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut()
+            .grad
+            .as_mut()
+            .unwrap()
+            .borrow_mut()
+            .copy_from_slice(&repeat_slice(&[-0.5_f32, -0.2, 1.0, 0.1], 3));
+        e3.borrow_mut().eval_bwd();
+
+        assert_allclose!(
+            &**e3.borrow().var.data.borrow(),
+            &repeat_slice(&[20.0_f32, 14.0, 56.0, 41.0], 3)
+        );
+        assert_allclose!(
+            &**e1.borrow().get_grad().borrow(),
+            &repeat_slice(&[-4.0_f32, -2.6, -1.2, 6.5, 4.3, 2.1], 3)
+        );
+        assert_allclose!(
+            &**e2.borrow().get_grad().borrow(),
+            &[3.5_f32, 0.2, 4.0, 0.1, 4.5, 0.0].map(|f| f * 3.0)
+        );
+    }
+
+    #[test]
+    fn test_matmul_only_one_require_grad() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+        assert!(e1.borrow().requires_grad());
+        let e2 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
+            )),
+            false,
+        );
+        assert!(!e2.borrow().requires_grad());
+
+        let e3 = mm(&e1, &e2).unwrap();
+        assert!(e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[2, 2]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut()
+            .grad
+            .as_mut()
+            .unwrap()
+            .borrow_mut()
+            .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
+        e3.borrow_mut().eval_bwd();
+
+        assert_allclose!(&**e3.borrow().var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+        assert_allclose!(
+            &**e1.borrow().get_grad().borrow(),
+            &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]
+        );
+        assert!(e2.borrow().grad.is_none());
+    }
+
+    #[test]
+    fn test_matmul_none_require_grad() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
+            )),
+            false,
+        );
+        assert!(!e1.borrow().requires_grad());
+        let e2 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
+            )),
+            false,
+        );
+        assert!(!e2.borrow().requires_grad());
+
+        let e3 = mm(&e1, &e2).unwrap();
+        assert!(!e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[2, 2]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut().eval_bwd();
+
+        assert_allclose!(&**e3.borrow().var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+    }
+
+    #[test]
+    fn test_matmul_same_parent() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[2, 2], (1..=4).map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+        assert!(e1.borrow().requires_grad());
+
+        let e3 = mm(&e1, &e1).unwrap();
+        assert!(e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[2, 2]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut()
+            .grad
+            .as_mut()
+            .unwrap()
+            .borrow_mut()
+            .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
+        e3.borrow_mut().eval_bwd();
+
+        assert_allclose!(&**e3.borrow().var.data.borrow(), &[7.0, 10.0, 15.0, 22.0]);
+        assert_allclose!(&**e1.borrow().get_grad().borrow(), &[1.6, -2.2, 4.2, 3.4]);
+    }
+
+    #[test]
+    fn test_matmul_same_parent_no_grad() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(
+                    &[3, 3],
+                    [5.0_f32, -0.1, 3.2, 4.9, 7.0, -2.3, -4.3, 1.2, -7.8],
+                )
+                .unwrap(),
+            )),
+            false,
+        );
+        assert!(!e1.borrow().requires_grad());
+
+        let e3 = mm(&e1, &e1).unwrap();
+        assert!(!e3.borrow().requires_grad());
+        assert_eq!(e3.borrow().var.meta.shape.as_slice(), &[3, 3]);
+        e3.borrow_mut().eval_fwd();
+        e3.borrow_mut().eval_bwd();
+
+        assert_allclose!(
+            &**e3.borrow().var.data.borrow(),
+            &[10.75, 2.64, -8.73, 68.69, 45.75, 17.52, 17.92, -0.53, 44.32]
+        );
+    }
 }

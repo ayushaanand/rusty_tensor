@@ -7,6 +7,12 @@ use crate::types::{Shared, SharedSlice};
 use Op::{Add, Mul, Sub};
 use std::rc::Rc;
 
+#[derive(Clone)]
+pub(crate) struct BinaryOp<T: TensorFType> {
+    input: [Shared<Expr<T>>; 2],
+    it: TensorIter,
+}
+
 fn build_binary_op<T: TensorFType>(
     a: &Shared<Expr<T>>,
     b: &Shared<Expr<T>>,
@@ -66,13 +72,6 @@ pub fn mul<T: TensorFType>(
     b: &Shared<Expr<T>>,
 ) -> TensorResult<Shared<Expr<T>>> {
     build_binary_op(a, b, Mul)
-}
-
-// ----------- BinaryOp ---------------------------------------------------------------------------
-#[derive(Clone)]
-pub(crate) struct BinaryOp<T: TensorFType> {
-    input: [Shared<Expr<T>>; 2],
-    it: TensorIter,
 }
 
 // 1. check Rc::ptr_eq since parents may be same
