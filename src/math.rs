@@ -43,7 +43,9 @@ impl<T: TensorFType> Expr<T> {
         self.op.fwd(&mut self.var.data.borrow_mut());
     }
     fn eval_bwd(&mut self) {
-        let grad = self.grad.as_ref().unwrap_or(&self.var.data);
+        let Some(grad) = &self.grad else {
+            return;
+        };
         self.op.bwd(&grad.borrow(), &self.var.data.borrow());
     }
 }

@@ -21,12 +21,12 @@ impl<T> Shared<T> {
     }
 }
 
-// use std::cell::UnsafeCell
+// use std::cell::UnsafeCell;
 // pub(crate) struct Shared<T>(Rc<UnsafeCell<T>>);
 //
 // impl<T> Shared<T> {
 //     pub(crate) fn new(val: T) -> Self { Self(Rc::new(UnsafeCell::new(val)).into()) }
-//
+//     pub(crate) fn as_rc(&self) -> &Rc<UnsafeCell<T>> { &self.0 }
 //     pub(crate) fn borrow(&self) -> &T { unsafe{ &*self.0.get() } }
 //     pub(crate) fn borrow_mut(&self) -> &mut T { unsafe{ &mut *self.0.get() } }
 // }

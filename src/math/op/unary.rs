@@ -39,6 +39,40 @@ fn relu<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>
     build_unary_op(input, Op::ReLu)
 }
 
+fn silu<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>> {
+    build_unary_op(input, Op::SiLu)
+}
+
 fn sigmoid<T: TensorFType>(input: &Shared<Expr<T>>) -> TensorResult<Shared<Expr<T>>> {
     build_unary_op(input, Op::Sigmoid)
+}
+
+// -------- Unary -------------------------------------------------------------------------
+#[derive(Clone)]
+pub(crate) struct UnaryOp<T: TensorFType> {
+    input: Shared<Expr<T>>,
+    it: TensorIter,
+}
+
+impl<T: TensorFType> UnaryOp<T> {
+    pub(super) fn fwd<F: Fn(T) -> T>(&mut self, out: &mut [T], f: F) {
+        let borrow = self.input.borrow();
+        let parent_data = borrow.var.data.borrow();
+
+        self.it.for_each(|pos| {
+            out[pos[0]] += f(parent_data[pos[1]]);
+        })
+    }
+
+    pub(super) fn bwd<F: Fn(T, T) -> T>(&mut self, grad: &[T], out_val: &[T], f: F) {
+        let borrow = self.input.borrow();
+        if borrow.requires_grad() {
+            let parent_data = borrow.var.data.borrow();
+            let mut parent_grad = borrow.grad.as_ref().unwrap().borrow_mut();
+
+            self.it.for_each(|pos| {
+                parent_grad[pos[1]] += grad[pos[0]] * f(out_val[pos[0]], parent_data[pos[1]]);
+            });
+        }
+    }
 }

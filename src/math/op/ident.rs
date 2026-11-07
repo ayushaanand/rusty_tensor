@@ -3,10 +3,7 @@ use crate::math::op::IdentOp;
 use crate::math::{Expr, Var, op::Op};
 use crate::types::{Shared, SharedSlice};
 
-pub fn ident<T: TensorFType>(
-    input: &Shared<Var<T>>,
-    requires_grad: bool,
-) -> TensorResult<Shared<Expr<T>>> {
+pub fn ident<T: TensorFType>(input: &Shared<Var<T>>, requires_grad: bool) -> Shared<Expr<T>> {
     let borrow = input.borrow();
 
     let op = Op::Ident(IdentOp {
@@ -15,9 +12,9 @@ pub fn ident<T: TensorFType>(
 
     let grad = requires_grad.then(|| SharedSlice::zeroes(borrow.meta.total_elems));
 
-    Ok(Shared::new(Expr {
+    Shared::new(Expr {
         var: borrow.clone(),
         grad,
         op,
-    }))
+    })
 }

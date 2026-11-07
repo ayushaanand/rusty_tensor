@@ -2,7 +2,6 @@ use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::MatmulShapeError;
 use crate::iterator::TensorIter;
-use crate::math::op::MatMulOp;
 use crate::math::{Expr, Var, op};
 use crate::tensor::TensorMeta;
 use crate::types::{Shared, SharedSlice};
@@ -62,4 +61,16 @@ pub fn mm<T: TensorFType>(
         grad,
         op,
     }))
+}
+
+#[derive(Clone)]
+pub(crate) struct MatMulOp<T: TensorFType> {
+    a: Shared<Expr<T>>,
+    b: Shared<Expr<T>>,
+    it: TensorIter,
+
+    // m*p @ p*n
+    m: usize,
+    p: usize,
+    n: usize,
 }

@@ -6,10 +6,12 @@ mod unary;
 mod view;
 
 use crate::consts::TensorFType;
-use crate::iterator::TensorIter;
 use crate::math::{Expr, Var};
 use crate::types::Shared;
 use binary::BinaryOp;
+use custom_unary::CustomUnaryOp;
+use matmul::MatMulOp;
+use unary::UnaryOp;
 
 #[derive(Clone)]
 pub enum Op<T: TensorFType> {
@@ -20,10 +22,10 @@ pub enum Op<T: TensorFType> {
     Mul(BinaryOp<T>),
 
     ReLu(UnaryOp<T>),
+    SiLu(UnaryOp<T>),
     Sigmoid(UnaryOp<T>),
 
     Apply(CustomUnaryOp<T>),
-    ApplyNoRetain(CustomUnaryOp<T>),
 
     MatMul(MatMulOp<T>),
 
@@ -40,6 +42,14 @@ impl<T: TensorFType> Op<T> {
             Op::Sub(op) => op.fwd(out, |a, b| a - b),
             Op::Mul(op) => op.fwd(out, |a, b| a * b),
 
+            Op::ReLu(op) => op.fwd(out, |x| x.max(T::zero())),
+            Op::SiLu(op) => op.fwd(out, |x| x / (T::one() + (-x).exp())),
+            Op::Sigmoid(op) => op.fwd(out, |x| T::one() / (T::one() + (-x).exp())),
+
+            Op::Apply(op) => op.fwd(out),
+
+            Op::MatMul(op) => op.fwd(out),
+
             _ => {
                 unreachable!()
             }
@@ -47,12 +57,26 @@ impl<T: TensorFType> Op<T> {
     }
 
     pub fn bwd(&mut self, grad: &[T], out_val: &[T]) {
+        let zero = T::zero();
+        let one = T::one();
         match self {
             Op::Ident(_) => {}
 
             Op::Add(op) => op.add_bwd(grad),
             Op::Sub(op) => op.sub_bwd(grad),
             Op::Mul(op) => op.mul_bwd(grad),
+
+            // Z = f(A)
+            Op::ReLu(op) => op.bwd(grad, out_val, |z, _| if z > zero { one } else { zero }),
+            Op::SiLu(op) => op.bwd(grad, out_val, |z, a|
+                // f'f-1(a) = sigmoid + a(sigmoid - sigmoid^2) = z(1 + (1-z)/a) or 1/2 if a == 0
+                if a == zero { one / (one + one) } else { z * (one + (one - z) / a) }
+            ),
+            Op::Sigmoid(op) => op.bwd(grad, out_val, |z, _| z * (one - z)),
+
+            Op::Apply(op) => op.bwd(grad, out_val),
+
+            Op::MatMul(op) => op.bwd(grad, out_val),
 
             _ => {
                 unreachable!()
@@ -67,42 +91,6 @@ pub(crate) struct IdentOp<T: TensorFType> {
 }
 
 #[derive(Clone)]
-pub(crate) struct CustomUnaryOp<T: TensorFType> {
-    u_op: UnaryOp<T>,
-    f_fwd: fn(T) -> T,
-    f_bwd: fn(T) -> T,
-}
-
-#[derive(Clone)]
-pub(crate) struct MatMulOp<T: TensorFType> {
-    a: Shared<Expr<T>>,
-    b: Shared<Expr<T>>,
-    it: TensorIter,
-
-    // m*p @ p*n
-    m: usize,
-    p: usize,
-    n: usize,
-}
-
-#[derive(Clone)]
-pub(crate) struct UnaryOp<T: TensorFType> {
-    input: Shared<Expr<T>>,
-    it: TensorIter,
-}
-
-#[derive(Clone)]
 pub(crate) struct ViewOp<T: TensorFType> {
     input: Shared<Expr<T>>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::math::Var;
-    use crate::tensor::Tensor;
-    use crate::types::Shared;
-
-    #[test]
-    fn test_ident() {}
 }
