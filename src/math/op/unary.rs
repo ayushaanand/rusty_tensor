@@ -79,15 +79,37 @@ impl<T: TensorFType> UnaryOp<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assert_allclose;
     use crate::math::op::ident::ident;
     use crate::tensor::Tensor;
 
-    // #[test]
-    // fn test_relu() {
-    //     let e1 = ident(&Shared::new(Var::from(
-    //         Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f64)).unwrap())),
-    //         true
-    //     );
-    //     let e2 = relu()
-    // }
+    #[test]
+    fn test_relu() {
+        let e1 = ident(
+            &Shared::new(Var::from(
+                Tensor::from_buf(&[2, 3], [-2.0_f32, -1.0, 0.0, 1.0, 2.0, 3.0]).unwrap(),
+            )),
+            true,
+        );
+        assert!(e1.borrow().requires_grad());
+
+        let e2 = relu(&e1).unwrap();
+        assert!(e2.borrow().requires_grad());
+
+        e2.borrow_mut().eval_fwd();
+        e2.borrow()
+            .get_grad()
+            .borrow_mut()
+            .copy_from_slice(&[-3.0, 1.0, -4.0, 0.0, 0.5, 0.01]);
+        e2.borrow_mut().eval_bwd();
+
+        assert_allclose!(
+            &**e2.borrow().var.data.borrow(),
+            &[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]
+        );
+        assert_allclose!(
+            &**e1.borrow().get_grad().borrow(),
+            &[0.0, 0.0, 0.0, 0.0, 0.5, 0.01]
+        );
+    }
 }

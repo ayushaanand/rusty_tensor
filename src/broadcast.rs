@@ -223,6 +223,8 @@ pub(crate) mod py_tests {
         if args.is_empty() {
             return Default::default();
         }
-        compute_broadcast_shape(&args, 0).unwrap_or_default().to_vec()
+        compute_broadcast_shape(&args, 0)
+            .unwrap_or_default()
+            .to_vec()
     }
 }

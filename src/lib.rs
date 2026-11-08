@@ -1,6 +1,5 @@
 #![cfg_attr(test, allow(dead_code))]
 pub mod broadcast;
-pub(crate) mod comp_kernels;
 pub mod consts;
 pub mod error;
 pub mod iterator;

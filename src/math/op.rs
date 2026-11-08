@@ -6,12 +6,14 @@ mod unary;
 mod view;
 
 use crate::consts::TensorFType;
-use crate::math::{Expr, Var};
+use crate::math::Var;
 use crate::types::Shared;
 use binary::BinaryOp;
 use custom_unary::CustomUnaryOp;
+use ident::IdentOp;
 use matmul::MatMulOp;
 use unary::UnaryOp;
+use view::ViewOp;
 
 #[derive(Clone)]
 pub enum Op<T: TensorFType> {
@@ -24,6 +26,7 @@ pub enum Op<T: TensorFType> {
     ReLu(UnaryOp<T>),
     SiLu(UnaryOp<T>),
     Sigmoid(UnaryOp<T>),
+    Softplus(UnaryOp<T>),
 
     Apply(CustomUnaryOp<T>),
 
@@ -35,6 +38,8 @@ pub enum Op<T: TensorFType> {
 
 impl<T: TensorFType> Op<T> {
     pub fn fwd(&mut self, out: &mut [T]) {
+        let zero = T::zero();
+        let one = T::one();
         match self {
             Op::Ident(_) => {}
 
@@ -42,17 +47,16 @@ impl<T: TensorFType> Op<T> {
             Op::Sub(op) => op.fwd(out, |a, b| a - b),
             Op::Mul(op) => op.fwd(out, |a, b| a * b),
 
-            Op::ReLu(op) => op.fwd(out, |x| x.max(T::zero())),
-            Op::SiLu(op) => op.fwd(out, |x| x / (T::one() + (-x).exp())),
-            Op::Sigmoid(op) => op.fwd(out, |x| T::one() / (T::one() + (-x).exp())),
+            Op::ReLu(op) => op.fwd(out, |x| T::max(x, zero)),
+            Op::SiLu(op) => op.fwd(out, |x| x / (one + T::exp(-x))),
+            Op::Sigmoid(op) => op.fwd(out, |x| one / (one + T::exp(-x))),
+            Op::Softplus(op) => op.fwd(out, |x| T::ln(one + T::exp(x))),
 
             Op::Apply(op) => op.fwd(out),
 
             Op::MatMul(op) => op.fwd(out),
 
-            _ => {
-                unreachable!()
-            }
+            Op::Transpose(op) | Op::Slice(op) => op.fwd(out),
         }
     }
 
@@ -73,24 +77,13 @@ impl<T: TensorFType> Op<T> {
                 if a == zero { one / (one + one) } else { z * (one + (one - z) / a) }
             ),
             Op::Sigmoid(op) => op.bwd(grad, out_val, |z, _| z * (one - z)),
+            Op::Softplus(op) => op.bwd(grad, out_val, |z, _| one - T::exp(-z)),
 
             Op::Apply(op) => op.bwd(grad, out_val),
 
             Op::MatMul(op) => op.bwd(grad),
 
-            _ => {
-                unreachable!()
-            }
+            Op::Transpose(op) | Op::Slice(op) => op.bwd(grad),
         }
     }
-}
-
-#[derive(Clone)]
-pub(crate) struct IdentOp<T: TensorFType> {
-    input: Shared<Var<T>>,
-}
-
-#[derive(Clone)]
-pub(crate) struct ViewOp<T: TensorFType> {
-    input: Shared<Expr<T>>,
 }

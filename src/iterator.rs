@@ -48,6 +48,7 @@ pub struct TensorIter {
 
 // 1. args.is_empty() -> return None
 // 2. any(arg.total_elems == SIZE_ZERO) -> return None
+// TODO: eliminate 2 to allow zero elem tensors too
 // 3. compute max_rank, if skip_dims > max_rank -> return None
 // 4. copy every arg's (shape, stride) to vecs of max_rank: prepend shape with 1, stride with 0, on the left
 // 5. compute_broadcast_shape

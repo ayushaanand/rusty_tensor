@@ -7,6 +7,7 @@ pub enum TensorError {
     AliasError,
     MatmulShapeError,
     ShapeError,
+    RangeError,
 }
 
 pub use TensorError::*;

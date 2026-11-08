@@ -1,6 +1,6 @@
 /// Represents a single dimension value (max 255 per axis).
 /// If testing, make sure to update PY_DIM_TYPE below.
-pub(crate) type DimType = u8;
+pub(crate) type DimType = usize;
 /// Zero-value sentinel for `DimType`.
 pub(crate) const DIM_ZERO: DimType = 0 as DimType;
 
