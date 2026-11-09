@@ -106,8 +106,8 @@ impl_slicing_from!(RangeToInclusive<usize>);
 impl_slicing_from!(RangeFull);
 
 #[macro_export]
-macro_rules! range {
-    ($($tok:tt)*) => { $crate::math::op::view::SlicingRange::from($($tok)*) };
+macro_rules! ranges {
+    ($($range:expr),* $(,)?) => { [$($crate::math::op::view::SlicingRange::from($range)),*] };
 }
 
 fn slice<T: TensorFType>(
@@ -200,7 +200,7 @@ mod tests {
             true,
         );
 
-        let e2 = slice(&e1, &[range!(..), range!(2..), range!(..=1)]).unwrap();
+        let e2 = slice(&e1, &ranges![.., 2.., ..=1]).unwrap();
         assert_eq!(&*e2.borrow().var.meta.shape, &[2, 1, 2]);
         e2.borrow_mut().eval_fwd();
         e2.borrow()
