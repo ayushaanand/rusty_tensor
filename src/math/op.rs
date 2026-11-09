@@ -6,8 +6,6 @@ mod unary;
 mod view;
 
 use crate::consts::TensorFType;
-use crate::math::Var;
-use crate::types::Shared;
 use binary::BinaryOp;
 use custom_unary::CustomUnaryOp;
 use ident::IdentOp;
@@ -37,7 +35,7 @@ pub enum Op<T: TensorFType> {
 }
 
 impl<T: TensorFType> Op<T> {
-    pub fn fwd(&mut self, out: &mut [T]) {
+    pub fn fwd(&self, out: &mut [T]) {
         let zero = T::zero();
         let one = T::one();
         match self {
@@ -60,7 +58,7 @@ impl<T: TensorFType> Op<T> {
         }
     }
 
-    pub fn bwd(&mut self, grad: &[T], out_val: &[T]) {
+    pub fn bwd(&self, grad: &[T], out_val: &[T]) {
         let zero = T::zero();
         let one = T::one();
         match self {

@@ -1,39 +1,40 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::RangeError;
 use crate::iterator::TensorIter;
 use crate::math::op::Op;
 use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
-use crate::types::{Shared, SharedSlice};
+use crate::types::SharedSlice;
 
 #[derive(Clone)]
 pub(super) struct ViewOp<T: TensorFType> {
-    input: Shared<Expr<T>>,
-    it: TensorIter,
+    input: Rc<Expr<T>>,
+    it: RefCell<TensorIter>,
 }
 
 fn build_view_op<T: TensorFType>(
-    input: &Shared<Expr<T>>,
+    input: &Rc<Expr<T>>,
     new_meta: TensorMeta,
     op_var: impl FnOnce(ViewOp<T>) -> Op<T>,
-) -> TensorResult<Shared<Expr<T>>> {
+) -> TensorResult<Rc<Expr<T>>> {
     let grad_meta = TensorMeta::new(&new_meta.shape);
-    let it = TensorIter::new([&grad_meta, &new_meta], 0)?;
-
+    let it = RefCell::new(
+        TensorIter::new([&grad_meta, &new_meta], 0)?
+    );
     let op = op_var(ViewOp {
         input: input.clone(),
         it,
     });
 
-    let borrow = input.borrow();
-    let grad = borrow
-        .requires_grad()
+    let grad = input.requires_grad()
         .then(|| SharedSlice::zeroes(new_meta.total_elems));
 
-    Ok(Shared::new(Expr {
+    Ok(Rc::new(Expr {
         var: Var {
             meta: new_meta,
-            ..borrow.var.clone()
+            data: input.var.data.clone()
         },
         grad,
         op,
@@ -41,13 +42,11 @@ fn build_view_op<T: TensorFType>(
 }
 
 pub fn transpose<T: TensorFType>(
-    input: &Shared<Expr<T>>,
+    input: &Rc<Expr<T>>,
     i: usize,
     j: usize,
-) -> TensorResult<Shared<Expr<T>>> {
-    let borrow = input.borrow();
-
-    let mut new_meta = borrow.var.meta.clone();
+) -> TensorResult<Rc<Expr<T>>> {
+    let mut new_meta = input.var.meta.clone();
     new_meta.shape.swap(i, j);
     new_meta.stride.swap(i, j);
 
@@ -111,10 +110,10 @@ macro_rules! ranges {
 }
 
 fn slice<T: TensorFType>(
-    input: &Shared<Expr<T>>,
+    input: &Rc<Expr<T>>,
     ranges: &[SlicingRange],
-) -> TensorResult<Shared<Expr<T>>> {
-    let mut new_meta = input.borrow().var.meta.clone();
+) -> TensorResult<Rc<Expr<T>>> {
+    let mut new_meta = input.var.meta.clone();
 
     if ranges.len() > new_meta.shape.len() {
         return Err(RangeError);
@@ -135,14 +134,12 @@ fn slice<T: TensorFType>(
 }
 
 impl<T: TensorFType> ViewOp<T> {
-    pub(super) fn fwd(&mut self, _: &mut [T]) {}
+    pub(super) fn fwd(&self, _: &mut [T]) {}
 
-    pub(super) fn bwd(&mut self, grad: &[T]) {
-        let parent = self.input.borrow();
-
-        if parent.requires_grad() {
-            let mut parent_grad = parent.get_grad().borrow_mut();
-            self.it.for_each(|pos| {
+    pub(super) fn bwd(&self, grad: &[T]) {
+        if let Some(parent_grad) = &self.input.grad {
+            let parent_grad = &mut *parent_grad.borrow_mut();
+            self.it.borrow_mut().for_each(|pos| {
                 parent_grad[pos[1]] += grad[pos[0]];
             });
         }
@@ -155,29 +152,27 @@ mod tests {
     use crate::assert_allclose;
     use crate::math::op::ident::ident;
     use crate::tensor::Tensor;
-    use std::iter::repeat_n;
 
     #[test]
     fn test_transpose() {
         let e1 = ident(
-            &Shared::new(Var::from(
+            &Rc::new(Var::from(
                 Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
             )),
             true,
         );
 
         let e2 = transpose(&e1, 0, 1).unwrap();
-        assert_eq!(&*e2.borrow().var.meta.shape, &[3, 2, 4]);
-        let e2borrow = &mut *e2.borrow_mut();
-
-        let Op::Transpose(op) = &mut e2borrow.op else {
+        assert_eq!(&*e2.var.meta.shape, &[3, 2, 4]);
+        
+        let Op::Transpose(op) = &e2.op else {
             unreachable!()
         };
 
         let mut v = Vec::new();
-        let e2data = e2borrow.var.data.borrow();
+        let e2data = e2.var.data.borrow();
 
-        op.it.for_each(|pos| {
+        op.it.borrow_mut().for_each(|pos| {
             v.push(e2data[pos[1]]);
         });
 
@@ -194,24 +189,23 @@ mod tests {
     #[test]
     fn test_slicing() {
         let e1 = ident(
-            &Shared::new(Var::from(
+            &Rc::new(Var::from(
                 Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
             )),
             true,
         );
 
         let e2 = slice(&e1, &ranges![.., 2.., ..=1]).unwrap();
-        assert_eq!(&*e2.borrow().var.meta.shape, &[2, 1, 2]);
-        e2.borrow_mut().eval_fwd();
-        e2.borrow()
-            .get_grad()
+        assert_eq!(&*e2.var.meta.shape, &[2, 1, 2]);
+        e2.eval_fwd();
+        e2.get_grad()
             .borrow_mut()
             .copy_from_slice(&[-1.0, -2.0, -3.0, -4.0]);
-        e2.borrow_mut().eval_bwd();
+        e2.eval_bwd();
 
         #[rustfmt::skip]
         assert_allclose!(
-            e1.borrow().get_grad().borrow(),
+            e1.get_grad().borrow(),
             &[0.0,  0.0, 0.0, 0.0,
               0.0,  0.0, 0.0, 0.0,
              -1.0, -2.0, 0.0, 0.0,
@@ -220,17 +214,13 @@ mod tests {
               0.0,  0.0, 0.0, 0.0,
              -3.0, -4.0, 0.0, 0.0]
         );
-
-        let e2borrow = &mut *e2.borrow_mut();
-
-        let Op::Slice(op) = &mut e2borrow.op else {
-            unreachable!()
-        };
+        
+        let Op::Slice(op) = &e2.op else { unreachable!() };
 
         let mut v = Vec::new();
-        let e2data = e2borrow.var.data.borrow();
+        let e2data = e2.var.data.borrow();
 
-        op.it.for_each(|pos| {
+        op.it.borrow_mut().for_each(|pos| {
             v.push(e2data[pos[1]]);
         });
 
