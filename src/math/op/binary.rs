@@ -36,7 +36,8 @@ fn build_binary_op<T: TensorFType>(
     });
 
     let total_elems = out_meta.total_elems;
-    let grad = inputs.iter()
+    let grad = inputs
+        .iter()
         .any(|expr| expr.requires_grad())
         .then(|| SharedSlice::zeroes(total_elems));
 
@@ -52,40 +53,28 @@ fn build_binary_op<T: TensorFType>(
     Ok(Rc::new(expr))
 }
 
-pub fn add<T: TensorFType>(
-    a: &Rc<Expr<T>>,
-    b: &Rc<Expr<T>>,
-) -> TensorResult<Rc<Expr<T>>> {
+pub fn add<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_binary_op(a, b, Add)
 }
 
-pub fn sub<T: TensorFType>(
-    a: &Rc<Expr<T>>,
-    b: &Rc<Expr<T>>,
-) -> TensorResult<Rc<Expr<T>>> {
+pub fn sub<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_binary_op(a, b, Sub)
 }
 
-pub fn mul<T: TensorFType>(
-    a: &Rc<Expr<T>>,
-    b: &Rc<Expr<T>>,
-) -> TensorResult<Rc<Expr<T>>> {
+pub fn mul<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_binary_op(a, b, Mul)
 }
 
-// 1. check Rc::ptr_eq since parents may be same
-// 2. if different parents -
-//    a. if both require grad, make a fused loop
-//    b. if only one requires, make it into a separate lambda and index using i and 1-i
-//    c. if none require grad, done
-// 3. else both are same parents, so one parent
-//    a. if parent requires grad, apply both grads at once
+// Rc::ptr_eq on parents is not enough, for e.g. in A + A^T
+// 1. if Rc::ptr_eq on expr -
+//    a. if [0].grad.is_some() - borrow_mut and borrow [0]'s data and use 2*grad
 //    b. else done
-//
-// pos[0] is for output
-// pos[i -> 1..=2] are inputs and pos[1 + i] is for parent[i]
-// contract logic but indexing i and 1-i in - for i in 0..2
-
+// 2. else -
+//    a. if .grad.is_some on both -
+//       i.  if Rc::ptr_eq on grads, borrow_mut [0].grad but index with both pos[0, 1]
+//       ii. else - borrow_mut both and proceed
+//    b. if .grad.is_some on only one - borrow_mut that's grad and proceed
+//    c. else - done
 impl<T: TensorFType> BinaryOp<T> {
     pub(super) fn fwd<F: Fn(T, T) -> T>(&self, out: &mut [T], f: F) {
         let slices = self.input.each_ref().map(|expr| expr.var.data.borrow());
@@ -95,136 +84,107 @@ impl<T: TensorFType> BinaryOp<T> {
         })
     }
 
-    pub(super) fn add_bwd(&self, grad: &[T]) {
-        // parents may be same and may or may not require grad
+    pub fn bwd_unified<F0, F1>(&self, grad: &[T], f_0: F0, f_1: F1)
+    where
+        // Fn(&mut this_mut_grad, bwd_grad, other_parent_data)
+        F0: Fn(&mut T, T, T),
+        F1: Fn(&mut T, T, T),
+    {
         let it = &mut *self.it.borrow_mut();
-        
-        if !Rc::ptr_eq(&self.input[0], &self.input[1]) {
-            // only parent[i] requires grad
-            let mut op_on_one = |i: usize| {
-                let mut parent_grad = self.input[i].get_grad().borrow_mut();
+        let parent_datas = self.input.each_ref().map(|expr| expr.var.data.borrow());
+
+        // if same parent, borrow only one and index uniformly, ie A + A
+        if Rc::ptr_eq(&self.input[0], &self.input[1]) {
+            if let Some(parent_grad) = &self.input[0].grad {
+                let parent_grad = &mut *parent_grad.borrow_mut();
                 it.for_each(|pos| {
-                    parent_grad[pos[1 + i]] += grad[pos[0]];
+                    f_0(
+                        &mut parent_grad[pos[1]],
+                        grad[pos[0]],
+                        parent_datas[0][pos[1]],
+                    );
+                    f_1(
+                        &mut parent_grad[pos[1]],
+                        grad[pos[0]],
+                        parent_datas[0][pos[1]],
+                    );
                 })
-            };
-
-            match self.input.each_ref().map(|expr| expr.requires_grad()) {
-                [true, true] => {
-                    // both parents require grad
-                    // fused version of op_on_one(0, 1)
-                    let mut parent_grads = self.input
-                        .each_ref()
-                        .map(|expr| expr.get_grad().borrow_mut());
-
-                    it.for_each(|pos| {
-                        parent_grads[0][pos[1]] += grad[pos[0]];
-                        parent_grads[1][pos[2]] += grad[pos[0]];
-                    })
-                }
-                [true, false] => {
-                    op_on_one(0);
-                }
-                [false, true] => {
-                    op_on_one(1);
-                }
-                [false, false] => {}
+            } else { /* unreachable!() */
             }
         } else {
-            // parents are same, but may not require grad
-            let parent = &self.input[0];
-            if parent.requires_grad() {
-                // parent require grad
-                let mut parent_grad = parent.get_grad().borrow_mut();
-                it.for_each(|pos| {
-                    // double for being both operands of addition, but no T::two() available
-                    parent_grad[pos[1]] += grad[pos[0]] + grad[pos[0]];
-                })
+            // different parents, one may not require grad
+            match self.input.each_ref().map(|expr| &expr.grad) {
+                [Some(p_grad1), Some(p_grad2)] => {
+                    // both require grad, but grads may be shared ie A + A^T
+                    if SharedSlice::ptr_eq(p_grad1, p_grad2) {
+                        // grads are shared, but uniform indexing not possible due to view changes
+                        let parent_grad = &mut *p_grad1.borrow_mut();
+                        it.for_each(|pos| {
+                            // parent.var.data can also be assumed aliased, because grads are too
+                            f_0(
+                                &mut parent_grad[pos[1]],
+                                grad[pos[0]],
+                                parent_datas[0][pos[2]],
+                            );
+                            f_1(
+                                &mut parent_grad[pos[2]],
+                                grad[pos[0]],
+                                parent_datas[0][pos[1]],
+                            );
+                        })
+                    } else {
+                        // separate grads, borrow and index separately
+                        let mut parent_grads = [p_grad1, p_grad2].map(|grad| grad.borrow_mut());
+                        it.for_each(|pos| {
+                            f_0(
+                                &mut parent_grads[0][pos[1]],
+                                grad[pos[0]],
+                                parent_datas[1][pos[2]],
+                            );
+                            f_1(
+                                &mut parent_grads[1][pos[2]],
+                                grad[pos[0]],
+                                parent_datas[0][pos[1]],
+                            );
+                        })
+                    }
+                }
+                // now only one requires_grad, borrow and index accordingly
+                [Some(p_grad1), None] => {
+                    let parent_grad = &mut *p_grad1.borrow_mut();
+                    it.for_each(|pos| {
+                        f_0(
+                            &mut parent_grad[pos[1]],
+                            grad[pos[0]],
+                            parent_datas[1][pos[2]],
+                        );
+                    })
+                }
+                [None, Some(p_grad2)] => {
+                    let parent_grad = &mut *p_grad2.borrow_mut();
+                    it.for_each(|pos| {
+                        f_1(
+                            &mut parent_grad[pos[2]],
+                            grad[pos[0]],
+                            parent_datas[0][pos[1]],
+                        );
+                    })
+                }
+                [None, None] => { /* unreachable!() */ }
             }
         }
     }
 
-    pub(super) fn sub_bwd(&self, grad: &[T]) {
-        if !Rc::ptr_eq(&self.input[0], &self.input[1]) {
-            let it = &mut *self.it.borrow_mut();
-
-            match self.input.each_ref().map(|expr| expr.requires_grad()) {
-                [true, true] => {
-                    let mut parent_grads = self.input
-                        .each_ref()
-                        .map(|expr| expr.get_grad().borrow_mut());
-
-                    it.for_each(|pos| {
-                        parent_grads[0][pos[1]] += grad[pos[0]];
-                        parent_grads[1][pos[2]] -= grad[pos[0]];
-                    })
-                }
-                [true, false] => {
-                    let mut parent_grad = self.input[0].get_grad().borrow_mut();
-                    it.for_each(|pos| {
-                        parent_grad[pos[1]] += grad[pos[0]];
-                    })
-                }
-                [false, true] => {
-                    let mut parent_grad = self.input[1].get_grad().borrow_mut();
-                    it.for_each(|pos| {
-                        parent_grad[pos[2]] -= grad[pos[0]];
-                    })
-                }
-                [false, false] => {}
-            }
-        }
-        // else both parents are same and even if they require grad, += grad and -= grad is no-op
+    pub fn add_bwd(&self, grad: &[T]) {
+        self.bwd_unified(grad, |g1, g, _| *g1 += g, |g2, g, _| *g2 += g)
     }
 
-    pub(super) fn mul_bwd(&self, grad: &[T]) {
-        let it = &mut *self.it.borrow_mut();
-        
-        if !Rc::ptr_eq(&self.input[0], &self.input[1]) {
-            let mut op_on_one = |i: usize| {
-                let mut parent_grad = self.input[i].get_grad().borrow_mut();
-                let other_parent_data = self.input[1 - i].var.data.borrow();
+    pub fn sub_bwd(&self, grad: &[T]) {
+        self.bwd_unified(grad, |g1, g, _| *g1 += g, |g2, g, _| *g2 -= g)
+    }
 
-                it.for_each(|pos| {
-                    parent_grad[pos[1 + (i)]] += grad[pos[0]] * other_parent_data[pos[1 + (1 - i)]];
-                })
-            };
-
-            match self.input.each_ref().map(|expr| expr.requires_grad()) {
-                [true, true] => {
-                    // fused version of op_on_one(0, 1)
-                    let mut parent_grads = self.input
-                        .each_ref()
-                        .map(|expr| expr.get_grad().borrow_mut());
-                    let parent_datas = self.input.each_ref().map(|expr| expr.var.data.borrow());
-
-                    it.for_each(|pos| {
-                        for i in 0..2 {
-                            parent_grads[i][pos[1 + (i)]] +=
-                                grad[pos[0]] * parent_datas[1 - i][pos[1 + (1 - i)]];
-                        }
-                    })
-                }
-                [true, false] => {
-                    op_on_one(0);
-                }
-                [false, true] => {
-                    op_on_one(1);
-                }
-                [false, false] => {}
-            }
-        } else {
-            let parent = &self.input[0];
-
-            if parent.requires_grad() {
-                let mut parent_grad = parent.get_grad().borrow_mut();
-                let parent_data = parent.var.data.borrow();
-
-                it.for_each(|pos| {
-                    parent_grad[pos[1]] +=
-                        grad[pos[0]] * parent_data[pos[1]] + grad[pos[0]] * parent_data[pos[1]];
-                });
-            }
-        }
+    pub fn mul_bwd(&self, grad: &[T]) {
+        self.bwd_unified(grad, |g1, g, d2| *g1 += g * d2, |g2, g, d1| *g2 += g * d1)
     }
 }
 
@@ -247,27 +207,19 @@ mod binary_op_tests {
         let e3 = add(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
-        
-        let Add(op) = &e3.op else {
-            unreachable!()
-        };
+
+        let Add(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e3.var.data.borrow()[pos[0]], 3.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
-            assert_eq!(
-                e2.get_grad().borrow()[pos[2]],
-                -2.0 * 3.0
-            );
+            assert_eq!(e2.get_grad().borrow()[pos[2]], -2.0 * 3.0);
         })
     }
 
@@ -284,17 +236,12 @@ mod binary_op_tests {
         let e3 = add(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
 
-        let Add(op) = &e3.op else {
-            unreachable!()
-        };
+        let Add(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
@@ -319,9 +266,7 @@ mod binary_op_tests {
         e3.eval_fwd();
         e3.eval_bwd();
 
-        let Add(op) = &e3.op else {
-            unreachable!()
-        };
+        let Add(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.var.data.borrow()[pos[0]], 3.0);
@@ -337,26 +282,18 @@ mod binary_op_tests {
         let e2 = add(&e1, &e1).unwrap();
         assert!(e1.requires_grad());
         e2.eval_fwd();
-        e2.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e2.eval_bwd();
-        
-        let Add(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Add(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e2.var.data.borrow()[pos[0]], 2.0);
 
-            assert_eq!(
-                e1.get_grad().borrow()[pos[1]],
-                -2.0 + -2.0
-            );
+            assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 + -2.0);
         })
     }
 
@@ -369,10 +306,8 @@ mod binary_op_tests {
         let e2 = add(&e1, &e1).unwrap();
         assert!(!e1.requires_grad());
         e2.eval_fwd();
-        
-        let Add(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Add(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.var.data.borrow()[pos[0]], 2.0);
@@ -392,27 +327,19 @@ mod binary_op_tests {
         let e3 = sub(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
 
-        let Sub(op) = &e3.op else {
-            unreachable!()
-        };
+        let Sub(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e3.var.data.borrow()[pos[0]], -1.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
-            assert_eq!(
-                e2.get_grad().borrow()[pos[2]],
-                2.0 * 3.0
-            );
+            assert_eq!(e2.get_grad().borrow()[pos[2]], 2.0 * 3.0);
         })
     }
 
@@ -429,17 +356,12 @@ mod binary_op_tests {
         let e3 = sub(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
 
-        let Sub(op) = &e3.op else {
-            unreachable!()
-        };
+        let Sub(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
@@ -464,9 +386,7 @@ mod binary_op_tests {
         e3.eval_fwd();
         e3.eval_bwd();
 
-        let Sub(op) = &e3.op else {
-            unreachable!()
-        };
+        let Sub(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.var.data.borrow()[pos[0]], -1.0);
@@ -482,17 +402,12 @@ mod binary_op_tests {
         let e2 = sub(&e1, &e1).unwrap();
         assert!(e1.requires_grad());
         e2.eval_fwd();
-        e2.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e2.eval_bwd();
-        
-        let Sub(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Sub(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
@@ -511,10 +426,8 @@ mod binary_op_tests {
         let e2 = sub(&e1, &e1).unwrap();
         assert!(!e1.requires_grad());
         e2.eval_fwd();
-        
-        let Sub(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Sub(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.var.data.borrow()[pos[0]], 0.0);
@@ -534,30 +447,19 @@ mod binary_op_tests {
         let e3 = mul(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
 
-        let Mul(op) = &e3.op else {
-            unreachable!()
-        };
+        let Mul(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
 
-            assert_eq!(
-                e1.get_grad().borrow()[pos[1]],
-                -2.0 * 2.0
-            );
-            assert_eq!(
-                e2.get_grad().borrow()[pos[2]],
-                -2.0 * 4.0 * 3.0
-            );
+            assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 * 2.0);
+            assert_eq!(e2.get_grad().borrow()[pos[2]], -2.0 * 4.0 * 3.0);
         })
     }
 
@@ -574,26 +476,18 @@ mod binary_op_tests {
         let e3 = mul(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
         e3.eval_fwd();
-        e3.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e3.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e3.eval_bwd();
 
-        let Mul(op) = &e3.op else {
-            unreachable!()
-        };
+        let Mul(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
 
-            assert_eq!(
-                e1.get_grad().borrow()[pos[1]],
-                -2.0 * 2.0
-            );
+            assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 * 2.0);
         })
     }
 
@@ -612,9 +506,7 @@ mod binary_op_tests {
         e3.eval_fwd();
         e3.eval_bwd();
 
-        let Mul(op) = &e3.op else {
-            unreachable!()
-        };
+        let Mul(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
@@ -630,26 +522,18 @@ mod binary_op_tests {
         let e2 = mul(&e1, &e1).unwrap();
         assert!(e1.requires_grad());
         e2.eval_fwd();
-        e2.get_grad()
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|grad| {
-                *grad = -2.0;
-            });
+        e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
+            *grad = -2.0;
+        });
         e2.eval_bwd();
-        
-        let Mul(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Mul(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
             assert_eq!(e2.var.data.borrow()[pos[0]], 16.0);
 
-            assert_eq!(
-                e1.get_grad().borrow()[pos[1]],
-                2.0 * -2.0 * 4.0
-            );
+            assert_eq!(e1.get_grad().borrow()[pos[1]], 2.0 * -2.0 * 4.0);
         })
     }
 
@@ -662,10 +546,8 @@ mod binary_op_tests {
         let e2 = mul(&e1, &e1).unwrap();
         assert!(!e1.requires_grad());
         e2.eval_fwd();
-        
-        let Mul(op) = &e2.op else {
-            unreachable!()
-        };
+
+        let Mul(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.var.data.borrow()[pos[0]], 16.0);

@@ -1,7 +1,6 @@
 use crate::consts::*;
 use crate::math::{Expr, Var, op::Op};
 use crate::types::SharedSlice;
-use std::ops::Deref;
 use std::rc::Rc;
 
 #[derive(Clone)]

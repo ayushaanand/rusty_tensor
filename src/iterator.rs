@@ -178,6 +178,7 @@ impl TensorIter {
         }
     }
 
+    // TODO: suppress some dimensions if not used by caller
     /// Advances to the next logical position, but doesn't check `done` flag but sets it correctly.
     #[inline(always)]
     pub fn advance_unchecked(&mut self) {

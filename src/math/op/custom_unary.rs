@@ -1,8 +1,8 @@
-use std::rc::Rc;
 use super::unary::{UnaryOp, build_unary_op};
 use crate::consts::*;
 use crate::math::Expr;
 use crate::math::op::Op;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub(crate) struct CustomUnaryOp<T: TensorFType> {

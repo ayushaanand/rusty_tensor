@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::MatmulShapeError;
@@ -6,6 +5,7 @@ use crate::iterator::TensorIter;
 use crate::math::{Expr, Var, op};
 use crate::tensor::TensorMeta;
 use crate::types::SharedSlice;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -18,10 +18,7 @@ pub(crate) struct MatMulOp<T: TensorFType> {
     mat_dims: (usize, usize, usize),
 }
 
-pub fn mm<T: TensorFType>(
-    a: &Rc<Expr<T>>,
-    b: &Rc<Expr<T>>,
-) -> TensorResult<Rc<Expr<T>>> {
+pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     const SKIP: usize = 2;
 
     let inputs = [a, b];
@@ -99,9 +96,13 @@ impl<T: TensorFType> MatMulOp<T> {
         let b_data = self.b.var.data.borrow();
 
         let (_, p, n) = self.mat_dims;
-        Self::mm_loop(&mut *self.it.borrow_mut(), self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
-            out[r_o + i * n + j] += a_data[a_o + i * p + k] * b_data[b_o + k * n + j];
-        });
+        Self::mm_loop(
+            &mut *self.it.borrow_mut(),
+            self.mat_dims,
+            |[r_o, a_o, b_o, i, j, k]| {
+                out[r_o + i * n + j] += a_data[a_o + i * p + k] * b_data[b_o + k * n + j];
+            },
+        );
     }
 
     pub(crate) fn bwd(&self, grad: &[T]) {
@@ -115,24 +116,40 @@ impl<T: TensorFType> MatMulOp<T> {
                     let mut a_grad = self.a.get_grad().borrow_mut();
                     let mut b_grad = self.b.get_grad().borrow_mut();
 
-                    Self::mm_loop(&mut *self.it.borrow_mut(), self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
-                        a_grad[a_o + i * p + k] += grad[r_o + i * n + j] * b_data[b_o + k * n + j]; // grad_A = grad @ B^T
-                        b_grad[b_o + k * n + j] += a_data[a_o + i * p + k] * grad[r_o + i * n + j]; // grad_B = A^T @ grad
-                    });
+                    Self::mm_loop(
+                        &mut *self.it.borrow_mut(),
+                        self.mat_dims,
+                        |[r_o, a_o, b_o, i, j, k]| {
+                            a_grad[a_o + i * p + k] +=
+                                grad[r_o + i * n + j] * b_data[b_o + k * n + j]; // grad_A = grad @ B^T
+                            b_grad[b_o + k * n + j] +=
+                                a_data[a_o + i * p + k] * grad[r_o + i * n + j]; // grad_B = A^T @ grad
+                        },
+                    );
                 }
                 (true, false) => {
                     let mut a_grad = self.a.get_grad().borrow_mut();
 
-                    Self::mm_loop(&mut *self.it.borrow_mut(), self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
-                        a_grad[a_o + i * p + k] += grad[r_o + i * n + j] * b_data[b_o + k * n + j];
-                    });
+                    Self::mm_loop(
+                        &mut *self.it.borrow_mut(),
+                        self.mat_dims,
+                        |[r_o, a_o, b_o, i, j, k]| {
+                            a_grad[a_o + i * p + k] +=
+                                grad[r_o + i * n + j] * b_data[b_o + k * n + j];
+                        },
+                    );
                 }
                 (false, true) => {
                     let mut b_grad = self.b.get_grad().borrow_mut();
 
-                    Self::mm_loop(&mut *self.it.borrow_mut(), self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
-                        b_grad[b_o + k * n + j] += a_data[a_o + i * p + k] * grad[r_o + i * n + j];
-                    });
+                    Self::mm_loop(
+                        &mut *self.it.borrow_mut(),
+                        self.mat_dims,
+                        |[r_o, a_o, b_o, i, j, k]| {
+                            b_grad[b_o + k * n + j] +=
+                                a_data[a_o + i * p + k] * grad[r_o + i * n + j];
+                        },
+                    );
                 }
                 (false, false) => {}
             }
@@ -140,12 +157,16 @@ impl<T: TensorFType> MatMulOp<T> {
             let parent_data = self.a.var.data.borrow();
             if self.a.requires_grad() {
                 let mut parent_grad = self.a.get_grad().borrow_mut();
-                Self::mm_loop(&mut *self.it.borrow_mut(), self.mat_dims, |[r_o, a_o, b_o, i, j, k]| {
-                    parent_grad[a_o + i * p + k] +=
-                        grad[r_o + i * n + j] * parent_data[b_o + k * n + j];
-                    parent_grad[b_o + k * n + j] +=
-                        parent_data[a_o + i * p + k] * grad[r_o + i * n + j];
-                });
+                Self::mm_loop(
+                    &mut *self.it.borrow_mut(),
+                    self.mat_dims,
+                    |[r_o, a_o, b_o, i, j, k]| {
+                        parent_grad[a_o + i * p + k] +=
+                            grad[r_o + i * n + j] * parent_data[b_o + k * n + j];
+                        parent_grad[b_o + k * n + j] +=
+                            parent_data[a_o + i * p + k] * grad[r_o + i * n + j];
+                    },
+                );
             }
         }
     }
@@ -216,14 +237,8 @@ mod tests {
         e3.eval_bwd();
 
         assert_allclose!(e3.var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
-        assert_allclose!(
-            e1.get_grad().borrow(),
-            &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]
-        );
-        assert_allclose!(
-            e2.get_grad().borrow(),
-            &[3.5, 0.2, 4.0, 0.1, 4.5, 0.0]
-        );
+        assert_allclose!(e1.get_grad().borrow(), &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]);
+        assert_allclose!(e2.get_grad().borrow(), &[3.5, 0.2, 4.0, 0.1, 4.5, 0.0]);
     }
 
     #[test]
@@ -292,10 +307,7 @@ mod tests {
         e3.eval_bwd();
 
         assert_allclose!(e3.var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
-        assert_allclose!(
-            e1.get_grad().borrow(),
-            &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]
-        );
+        assert_allclose!(e1.get_grad().borrow(), &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]);
         assert!(e2.grad.is_none());
     }
 

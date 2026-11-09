@@ -10,8 +10,16 @@ impl<T> SharedSlice<T> {
         Self(Rc::new(RefCell::new(v.into())))
     }
 
-    pub fn borrow(&self) -> Ref<'_, Box<[T]>> { self.0.borrow() }
-    pub fn borrow_mut(&self) -> RefMut<'_, Box<[T]>> { self.0.borrow_mut() }
+    pub fn borrow(&self) -> Ref<'_, Box<[T]>> {
+        self.0.borrow()
+    }
+    pub fn borrow_mut(&self) -> RefMut<'_, Box<[T]>> {
+        self.0.borrow_mut()
+    }
+
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Rc::ptr_eq(&this.0, &other.0)
+    }
 }
 
 impl<T: Zero + Clone> SharedSlice<T> {

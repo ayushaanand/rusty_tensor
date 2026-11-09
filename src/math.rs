@@ -1,8 +1,8 @@
-use std::cell::RefCell;
 use crate::consts::*;
 use crate::math::op::Op;
 use crate::tensor::{Tensor, TensorMeta};
 use crate::types::SharedSlice;
+use std::cell::RefCell;
 
 mod op;
 
@@ -26,6 +26,7 @@ impl<T: TensorFType> From<Tensor<T>> for Var<T> {
 #[derive(Clone)]
 struct Expr<T: TensorFType> {
     var: Var<T>,
+    // TODO: remove var and SharedSlice, data and Option<grad> should be in one Rc
     grad: Option<SharedSlice<T>>,
     op: Op<T>,
 }
@@ -49,7 +50,9 @@ impl<T: TensorFType> Expr<T> {
         self.op.fwd(&mut self.var.data.borrow_mut());
     }
     fn eval_bwd(&self) {
-        let Some(grad) = &self.grad else { return; };
+        let Some(grad) = &self.grad else {
+            return;
+        };
 
         // TODO: expr requires_grad, ie one parent must require too (if expr not ident)
         //       may be optimizable

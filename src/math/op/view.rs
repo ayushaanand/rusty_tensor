@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::RangeError;
 use crate::iterator::TensorIter;
@@ -7,6 +5,8 @@ use crate::math::op::Op;
 use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
 use crate::types::SharedSlice;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub(super) struct ViewOp<T: TensorFType> {
@@ -20,21 +20,20 @@ fn build_view_op<T: TensorFType>(
     op_var: impl FnOnce(ViewOp<T>) -> Op<T>,
 ) -> TensorResult<Rc<Expr<T>>> {
     let grad_meta = TensorMeta::new(&new_meta.shape);
-    let it = RefCell::new(
-        TensorIter::new([&grad_meta, &new_meta], 0)?
-    );
+    let it = RefCell::new(TensorIter::new([&grad_meta, &new_meta], 0)?);
     let op = op_var(ViewOp {
         input: input.clone(),
         it,
     });
 
-    let grad = input.requires_grad()
+    let grad = input
+        .requires_grad()
         .then(|| SharedSlice::zeroes(new_meta.total_elems));
 
     Ok(Rc::new(Expr {
         var: Var {
             meta: new_meta,
-            data: input.var.data.clone()
+            data: input.var.data.clone(),
         },
         grad,
         op,
@@ -164,7 +163,7 @@ mod tests {
 
         let e2 = transpose(&e1, 0, 1).unwrap();
         assert_eq!(&*e2.var.meta.shape, &[3, 2, 4]);
-        
+
         let Op::Transpose(op) = &e2.op else {
             unreachable!()
         };
@@ -214,8 +213,10 @@ mod tests {
               0.0,  0.0, 0.0, 0.0,
              -3.0, -4.0, 0.0, 0.0]
         );
-        
-        let Op::Slice(op) = &e2.op else { unreachable!() };
+
+        let Op::Slice(op) = &e2.op else {
+            unreachable!()
+        };
 
         let mut v = Vec::new();
         let e2data = e2.var.data.borrow();

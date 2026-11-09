@@ -1,11 +1,11 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::consts::*;
 use crate::iterator::TensorIter;
 use crate::math::op::*;
 use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
 use crate::types::SharedSlice;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub(crate) struct UnaryOp<T: TensorFType> {
@@ -19,9 +19,7 @@ pub fn build_unary_op<T: TensorFType>(
 ) -> TensorResult<Rc<Expr<T>>> {
     let out_meta = TensorMeta::new(input.var.meta.shape.as_slice());
 
-    let it = RefCell::new(
-        TensorIter::new([&out_meta, &input.var.meta], 0)?
-    );
+    let it = RefCell::new(TensorIter::new([&out_meta, &input.var.meta], 0)?);
 
     let op = op_var(UnaryOp {
         input: input.clone(),
@@ -102,13 +100,7 @@ mod tests {
             .copy_from_slice(&[-3.0, 1.0, -4.0, 0.0, 0.5, 0.01]);
         e2.eval_bwd();
 
-        assert_allclose!(
-            e2.var.data.borrow(),
-            &[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]
-        );
-        assert_allclose!(
-            e1.get_grad().borrow(),
-            &[0.0, 0.0, 0.0, 0.0, 0.5, 0.01]
-        );
+        assert_allclose!(e2.var.data.borrow(), &[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
+        assert_allclose!(e1.get_grad().borrow(), &[0.0, 0.0, 0.0, 0.0, 0.5, 0.01]);
     }
 }
