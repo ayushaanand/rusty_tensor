@@ -1,5 +1,5 @@
 use crate::broadcast::compute_broadcast_shape_const;
-use crate::consts::{TensorFType, TensorResult};
+use crate::consts::{SizeType, TensorFType, TensorResult};
 use crate::error::MatmulShapeError;
 use crate::iterator::TensorIter;
 use crate::math::{Expr, Var, op};
@@ -14,7 +14,7 @@ pub(crate) struct MatMulOp<T: TensorFType> {
     b: Rc<Expr<T>>,
     it: RefCell<TensorIter>,
 
-    // m*p @ p*n -> (m, p, n)
+    // m*p @ p*n  (m, p, n)
     mat_dims: (usize, usize, usize),
 }
 
@@ -71,20 +71,31 @@ pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<E
 }
 
 impl<T: TensorFType> MatMulOp<T> {
-    fn mm_loop<F: FnMut([usize; 6])>(
-        it: &mut TensorIter,
-        mat_dims: (usize, usize, usize),
-        mut f: F,
-    ) {
-        let (m, p, n) = mat_dims;
-        it.for_each(|pos| {
-            let r_o = pos[0];
-            let a_o = pos[1];
-            let b_o = pos[2];
+    fn mm_loop<F: FnMut(usize, usize, usize)>(&self, mut f: F) {
+        let (m, p, n) = self.mat_dims;
+
+        fn inner_strides<T: TensorFType>(arg: &Rc<Expr<T>>) -> [SizeType; 2] {
+            *arg.var.meta.stride.last_chunk::<2>().unwrap()
+        }
+
+        let inner_a_strides = inner_strides(&self.a);
+        let inner_b_strides = inner_strides(&self.b);
+
+        self.it.borrow_mut().for_each(|pos| {
+            let (r_offset, a_offset, b_offset) = (pos[0], pos[1], pos[2]);
             for i in 0..m {
+                let r_row = r_offset + i * n;
+                let a_row = a_offset + i * inner_a_strides[0];
                 for k in 0..p {
+                    let a_idx = a_row + k * inner_a_strides[1];
+                    let b_row = b_offset + k * inner_b_strides[0];
                     for j in 0..n {
-                        f([r_o, a_o, b_o, i, j, k]);
+                        let r_idx = r_row + j;
+                        let b_idx = b_row + j * inner_b_strides[1];
+                        // let r_idx = r_offset + i * n + j * 1;
+                        // let a_idx = a_offset + i * inner_a_strides[0] + k * inner_a_strides[1];
+                        // let b_idx = b_offset + k * inner_b_strides[0] + j * inner_b_strides[1];
+                        f(r_idx, a_idx, b_idx);
                     }
                 }
             }
@@ -95,79 +106,55 @@ impl<T: TensorFType> MatMulOp<T> {
         let a_data = self.a.var.data.borrow();
         let b_data = self.b.var.data.borrow();
 
-        let (_, p, n) = self.mat_dims;
-        Self::mm_loop(
-            &mut *self.it.borrow_mut(),
-            self.mat_dims,
-            |[r_o, a_o, b_o, i, j, k]| {
-                out[r_o + i * n + j] += a_data[a_o + i * p + k] * b_data[b_o + k * n + j];
-            },
-        );
+        self.mm_loop(|r_idx, a_idx, b_idx| {
+            out[r_idx] += a_data[a_idx] * b_data[b_idx];
+        });
     }
 
     pub(crate) fn bwd(&self, grad: &[T]) {
-        let (_, p, n) = self.mat_dims;
-        if !Rc::ptr_eq(&self.a, &self.b) {
-            let a_data = self.a.var.data.borrow();
-            let b_data = self.b.var.data.borrow();
+        let a_data = &*self.a.var.data.borrow();
+        let b_data = &*self.b.var.data.borrow();
 
-            match (self.a.requires_grad(), self.b.requires_grad()) {
-                (true, true) => {
-                    let mut a_grad = self.a.get_grad().borrow_mut();
-                    let mut b_grad = self.b.get_grad().borrow_mut();
+        // Rc::ptr_eq on expr branch is removed since uniform indexing optimization is not possible in matmul
+        // write must be done through both indices, which is done in grad aliased case anyway
 
-                    Self::mm_loop(
-                        &mut *self.it.borrow_mut(),
-                        self.mat_dims,
-                        |[r_o, a_o, b_o, i, j, k]| {
-                            a_grad[a_o + i * p + k] +=
-                                grad[r_o + i * n + j] * b_data[b_o + k * n + j]; // grad_A = grad @ B^T
-                            b_grad[b_o + k * n + j] +=
-                                a_data[a_o + i * p + k] * grad[r_o + i * n + j]; // grad_B = A^T @ grad
-                        },
-                    );
+        // different parents, one may not require grad
+        match [&self.a.grad, &self.b.grad] {
+            [Some(a_grad), Some(b_grad)] => {
+                // both require grad, but grads may be shared ie A * A^T
+                if SharedSlice::ptr_eq(a_grad, b_grad) {
+                    // grads are shared, but uniform indexing not possible due to view changes
+                    let parent_grad = &mut *a_grad.borrow_mut();
+                    let parent_data = a_data;
+                    self.mm_loop(|r_idx, a_idx, b_idx| {
+                        parent_grad[a_idx] += grad[r_idx] * parent_data[b_idx];
+                        parent_grad[b_idx] += parent_data[a_idx] * grad[r_idx];
+                    })
+                } else {
+                    // separate grads, borrow_mut and index separately
+                    let a_grad = &mut *a_grad.borrow_mut();
+                    let b_grad = &mut *b_grad.borrow_mut();
+
+                    self.mm_loop(|r_idx, a_idx, b_idx| {
+                        a_grad[a_idx] += grad[r_idx] * b_data[b_idx];
+                        b_grad[b_idx] += a_data[a_idx] * grad[r_idx];
+                    })
                 }
-                (true, false) => {
-                    let mut a_grad = self.a.get_grad().borrow_mut();
-
-                    Self::mm_loop(
-                        &mut *self.it.borrow_mut(),
-                        self.mat_dims,
-                        |[r_o, a_o, b_o, i, j, k]| {
-                            a_grad[a_o + i * p + k] +=
-                                grad[r_o + i * n + j] * b_data[b_o + k * n + j];
-                        },
-                    );
-                }
-                (false, true) => {
-                    let mut b_grad = self.b.get_grad().borrow_mut();
-
-                    Self::mm_loop(
-                        &mut *self.it.borrow_mut(),
-                        self.mat_dims,
-                        |[r_o, a_o, b_o, i, j, k]| {
-                            b_grad[b_o + k * n + j] +=
-                                a_data[a_o + i * p + k] * grad[r_o + i * n + j];
-                        },
-                    );
-                }
-                (false, false) => {}
             }
-        } else {
-            let parent_data = self.a.var.data.borrow();
-            if self.a.requires_grad() {
-                let mut parent_grad = self.a.get_grad().borrow_mut();
-                Self::mm_loop(
-                    &mut *self.it.borrow_mut(),
-                    self.mat_dims,
-                    |[r_o, a_o, b_o, i, j, k]| {
-                        parent_grad[a_o + i * p + k] +=
-                            grad[r_o + i * n + j] * parent_data[b_o + k * n + j];
-                        parent_grad[b_o + k * n + j] +=
-                            parent_data[a_o + i * p + k] * grad[r_o + i * n + j];
-                    },
-                );
+            // now only one requires_grad, borrow and index accordingly
+            [Some(a_grad), None] => {
+                let a_grad = &mut *a_grad.borrow_mut();
+                self.mm_loop(|r_idx, a_idx, b_idx| {
+                    a_grad[a_idx] += grad[r_idx] * b_data[b_idx];
+                })
             }
+            [None, Some(b_grad)] => {
+                let b_grad = &mut *b_grad.borrow_mut();
+                self.mm_loop(|r_idx, a_idx, b_idx| {
+                    b_grad[b_idx] += a_data[a_idx] * grad[r_idx];
+                })
+            }
+            [None, None] => { /* unreachable!() */ }
         }
     }
 }
