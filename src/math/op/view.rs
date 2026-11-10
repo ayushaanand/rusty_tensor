@@ -181,9 +181,12 @@ mod tests {
         let e2 = slice(&e1, &ranges![.., 2.., ..=1]).unwrap();
         assert_eq!(&*e2.var.meta.shape, &[2, 1, 2]);
         e2.eval_fwd();
-        e2.get_grad()
-            .borrow_mut()
-            .copy_from_slice(&[-1.0, -2.0, -3.0, -4.0]);
+        let Op::Slice(ViewOp { it, .. }) = &e2.op else {
+            unreachable!()
+        };
+        it.borrow_mut().for_each(|pos| {
+            e2.get_grad().borrow_mut()[pos[1]] += -9.0;
+        });
         e2.eval_bwd();
 
         #[rustfmt::skip]
@@ -191,21 +194,17 @@ mod tests {
             e1.get_grad().borrow(),
             &[0.0,  0.0, 0.0, 0.0,
               0.0,  0.0, 0.0, 0.0,
-             -1.0, -2.0, 0.0, 0.0,
+             -9.0, -9.0, 0.0, 0.0,
 
               0.0,  0.0, 0.0, 0.0,
               0.0,  0.0, 0.0, 0.0,
-             -3.0, -4.0, 0.0, 0.0]
+             -9.0, -9.0, 0.0, 0.0]
         );
-
-        let Op::Slice(op) = &e2.op else {
-            unreachable!()
-        };
 
         let mut v = Vec::new();
         let e2data = e2.var.data.borrow();
 
-        op.it.borrow_mut().for_each(|pos| {
+        it.borrow_mut().for_each(|pos| {
             v.push(e2data[pos[1]]);
         });
 
