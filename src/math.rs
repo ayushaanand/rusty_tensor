@@ -2,7 +2,6 @@ use crate::consts::*;
 use crate::math::op::Op;
 use crate::tensor::{Tensor, TensorMeta};
 use crate::types::SharedSlice;
-use std::cell::RefCell;
 
 mod op;
 

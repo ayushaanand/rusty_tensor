@@ -54,7 +54,7 @@ impl<T: TensorFType> Op<T> {
 
             Op::MatMul(op) => op.fwd(out),
 
-            Op::Transpose(op) | Op::Slice(op) => op.fwd(out),
+            Op::Transpose(_) | Op::Slice(_) => {}
         }
     }
 
@@ -81,7 +81,7 @@ impl<T: TensorFType> Op<T> {
 
             Op::MatMul(op) => op.bwd(grad),
 
-            Op::Transpose(op) | Op::Slice(op) => op.bwd(grad),
+            Op::Transpose(_) | Op::Slice(_) => {}
         }
     }
 }

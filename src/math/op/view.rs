@@ -26,16 +26,12 @@ fn build_view_op<T: TensorFType>(
         it,
     });
 
-    let grad = input
-        .requires_grad()
-        .then(|| SharedSlice::zeroes(new_meta.total_elems));
-
     Ok(Rc::new(Expr {
         var: Var {
             meta: new_meta,
             data: input.var.data.clone(),
         },
-        grad,
+        grad: input.grad.clone(),
         op,
     }))
 }
@@ -135,21 +131,15 @@ fn slice<T: TensorFType>(
 impl<T: TensorFType> ViewOp<T> {
     pub(super) fn fwd(&self, _: &mut [T]) {}
 
-    pub(super) fn bwd(&self, grad: &[T]) {
-        if let Some(parent_grad) = &self.input.grad {
-            let parent_grad = &mut *parent_grad.borrow_mut();
-            self.it.borrow_mut().for_each(|pos| {
-                parent_grad[pos[1]] += grad[pos[0]];
-            });
-        }
-    }
+    pub(super) fn bwd(&self, _: &[T]) {}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::assert_allclose;
-    use crate::math::op::ident::ident;
+    use crate::math::op::{binary::add, ident::ident};
     use crate::tensor::Tensor;
 
     #[test]
@@ -226,5 +216,29 @@ mod tests {
         });
 
         assert_allclose!(v, &[8.0, 9.0, 20.0, 21.0]);
+    }
+
+    #[test]
+    fn test_view_add() {
+        let e1 = ident(
+            &Rc::new(Var::from(
+                Tensor::from_buf(&[3, 3], (1..=9).map(|i| i as f32)).unwrap(),
+            )),
+            true,
+        );
+        let e2 = transpose(&e1, 0, 1).unwrap();
+
+        let e3 = add(&e1, &e2).unwrap();
+
+        e3.eval_fwd();
+        e3.get_grad()
+            .borrow_mut()
+            .copy_from_slice(&(1..=9).map(|i| i as f32).collect::<Vec<_>>());
+        e3.eval_bwd();
+
+        assert_eq!(
+            &**e1.get_grad().borrow(),
+            &[2.0, 6.0, 10.0, 6.0, 10.0, 14.0, 10.0, 14.0, 18.0]
+        )
     }
 }
