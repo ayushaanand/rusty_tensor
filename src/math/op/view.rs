@@ -128,12 +128,6 @@ fn slice<T: TensorFType>(
     build_view_op(input, new_meta, Op::Slice)
 }
 
-impl<T: TensorFType> ViewOp<T> {
-    pub(super) fn fwd(&self, _: &mut [T]) {}
-
-    pub(super) fn bwd(&self, _: &[T]) {}
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
