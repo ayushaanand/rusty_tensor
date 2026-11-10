@@ -1,12 +1,14 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::Op;
 use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::*;
 use crate::iterator::TensorIter;
-use crate::math::{Expr, Var, op::Op};
+use crate::math::{Expr, Storage};
 use crate::tensor::TensorMeta;
-use crate::types::SharedSlice;
+
 use Op::{Add, Mul, Sub};
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[derive(Clone)]
 pub(crate) struct BinaryOp<T: TensorFType> {
@@ -20,13 +22,12 @@ fn build_binary_op<T: TensorFType>(
     op_var: fn(BinaryOp<T>) -> Op<T>,
 ) -> TensorResult<Rc<Expr<T>>> {
     let inputs = [a, b];
-    let out_shape =
-        compute_broadcast_shape_const(inputs.map(|ex| ex.var.meta.shape.as_slice()), 0)?;
+    let out_shape = compute_broadcast_shape_const(inputs.map(|ex| ex.meta.shape.as_slice()), 0)?;
 
     let out_meta = TensorMeta::new(out_shape.as_slice());
 
     let it = RefCell::new(TensorIter::new(
-        std::iter::once(&out_meta).chain(inputs.map(|i| &i.var.meta)),
+        [&out_meta, &inputs[0].meta, &inputs[1].meta],
         0,
     )?);
 
@@ -35,18 +36,10 @@ fn build_binary_op<T: TensorFType>(
         it,
     });
 
-    let total_elems = out_meta.total_elems;
-    let grad = inputs
-        .iter()
-        .any(|expr| expr.requires_grad())
-        .then(|| SharedSlice::zeroes(total_elems));
-
+    let requires_grad = inputs.into_iter().any(|expr| expr.requires_grad());
     let expr = Expr {
-        var: Var {
-            meta: out_meta,
-            data: SharedSlice::zeroes(total_elems),
-        },
-        grad,
+        storage: Rc::new(Storage::zeroes(out_meta.total_elems, requires_grad)),
+        meta: out_meta,
         op,
     };
 
@@ -77,10 +70,10 @@ pub fn mul<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<
 //    c. else - done
 impl<T: TensorFType> BinaryOp<T> {
     pub(super) fn fwd<F: Fn(T, T) -> T>(&self, out: &mut [T], f: F) {
-        let slices = self.input.each_ref().map(|expr| expr.var.data.borrow());
+        let parents = self.input.each_ref().map(|expr| expr.storage.data.borrow());
 
         self.it.borrow_mut().for_each(|pos| {
-            out[pos[0]] += f(slices[0][pos[1]], slices[1][pos[2]]);
+            out[pos[0]] += f(parents[0][pos[1]], parents[1][pos[2]]);
         })
     }
 
@@ -91,40 +84,42 @@ impl<T: TensorFType> BinaryOp<T> {
         F1: Fn(T, T) -> T,
     {
         let it = &mut *self.it.borrow_mut();
-        let parent_datas = self.input.each_ref().map(|expr| expr.var.data.borrow());
 
-        // if same parent, borrow only one and index uniformly, ie A + A
         if Rc::ptr_eq(&self.input[0], &self.input[1]) {
-            if let Some(parent_grad) = &self.input[0].grad {
+            // same parent, borrow only one and index uniformly, ie A + A
+            if let Some(parent_grad) = &self.input[0].storage.grad {
                 let parent_grad = &mut *parent_grad.borrow_mut();
+                let parent_data = &*self.input[0].storage.data.borrow();
                 it.for_each(|pos| {
-                    let tot_grad = f_0(grad[pos[0]], parent_datas[0][pos[1]])
-                        + f_1(grad[pos[0]], parent_datas[0][pos[1]]);
+                    let arg = (grad[pos[0]], parent_data[pos[1]]);
+                    let tot_grad = f_0(arg.0, arg.1) + f_1(arg.0, arg.1);
                     parent_grad[pos[1]] += tot_grad;
                 })
             } else { /* unreachable!() */
             }
+        } else if Rc::ptr_eq(&self.input[0].storage, &self.input[1].storage) {
+            // diff parent, but same grad, borrow once, but index separately
+            if let Some(parent_grad) = &self.input[0].storage.grad {
+                let parent_grad = &mut *parent_grad.borrow_mut();
+                let parent_data = &*self.input[0].storage.data.borrow();
+                it.for_each(|pos| {
+                    parent_grad[pos[1]] += f_0(grad[pos[0]], parent_data[pos[2]]);
+                    parent_grad[pos[2]] += f_1(grad[pos[0]], parent_data[pos[1]]);
+                })
+            } else { /* unreachable!() */
+            }
         } else {
-            // different parents, one may not require grad
-            match self.input.each_ref().map(|expr| &expr.grad) {
+            let parent_datas = self.input.each_ref().map(|expr| expr.storage.data.borrow());
+
+            // different parents, different grads, one may not require grad
+            match self.input.each_ref().map(|expr| &expr.storage.grad) {
                 [Some(p_grad1), Some(p_grad2)] => {
-                    // both require grad, but grads may be shared ie A + A^T
-                    if SharedSlice::ptr_eq(p_grad1, p_grad2) {
-                        // grads are shared, but uniform indexing not possible due to view changes
-                        let parent_grad = &mut *p_grad1.borrow_mut();
-                        it.for_each(|pos| {
-                            // parent.var.data can also be assumed aliased, because grads are too
-                            parent_grad[pos[1]] += f_0(grad[pos[0]], parent_datas[0][pos[2]]);
-                            parent_grad[pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
-                        })
-                    } else {
-                        // separate grads, borrow and index separately
-                        let mut parent_grads = [p_grad1, p_grad2].map(|grad| grad.borrow_mut());
-                        it.for_each(|pos| {
-                            parent_grads[0][pos[1]] += f_0(grad[pos[0]], parent_datas[1][pos[2]]);
-                            parent_grads[1][pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
-                        })
-                    }
+                    // separate grads, borrow and index separately
+                    let mut parent_grads = [p_grad1, p_grad2].map(|grad| grad.borrow_mut());
+                    it.for_each(|pos| {
+                        parent_grads[0][pos[1]] += f_0(grad[pos[0]], parent_datas[1][pos[2]]);
+                        parent_grads[1][pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
+                    })
                 }
                 // now only one requires_grad, borrow and index accordingly
                 [Some(p_grad1), None] => {
@@ -168,12 +163,10 @@ mod binary_op_tests {
 
     #[test]
     fn test_add_diff_parent_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, true);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), true);
         assert!(e2.requires_grad());
 
         let e3 = add(&e1, &e2).unwrap();
@@ -188,7 +181,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], 3.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 3.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
             assert_eq!(e2.get_grad().borrow()[pos[2]], -2.0 * 3.0);
@@ -197,12 +190,10 @@ mod binary_op_tests {
 
     #[test]
     fn test_add_diff_parent_one_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, false);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
         assert!(!e2.requires_grad());
 
         let e3 = add(&e1, &e2).unwrap();
@@ -217,7 +208,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], 3.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 3.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
         })
@@ -225,13 +216,11 @@ mod binary_op_tests {
 
     #[test]
     fn test_add_diff_parent_none_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), false);
+        assert!(!e1.requires_grad());
 
-        let e1 = ident(&v1, false);
-        assert!(!e1.requires_grad());
-        let e2 = ident(&v2, false);
-        assert!(!e1.requires_grad());
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
+        assert!(!e2.requires_grad());
 
         let e3 = add(&e1, &e2).unwrap();
         assert!(!e3.requires_grad());
@@ -241,18 +230,17 @@ mod binary_op_tests {
         let Add(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e3.var.data.borrow()[pos[0]], 3.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 3.0);
         })
     }
 
     #[test]
     fn test_add_same_parent_requires_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let e1 = ident(&v, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
 
         let e2 = add(&e1, &e1).unwrap();
-        assert!(e1.requires_grad());
+        assert!(e2.requires_grad());
         e2.eval_fwd();
         e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
             *grad = -2.0;
@@ -263,7 +251,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e2.var.data.borrow()[pos[0]], 2.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 2.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 + -2.0);
         })
@@ -271,29 +259,26 @@ mod binary_op_tests {
 
     #[test]
     fn test_add_same_parent_no_require_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let e1 = ident(&v, false);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), false);
         assert!(!e1.requires_grad());
 
         let e2 = add(&e1, &e1).unwrap();
-        assert!(!e1.requires_grad());
+        assert!(!e2.requires_grad());
         e2.eval_fwd();
 
         let Add(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e2.var.data.borrow()[pos[0]], 2.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 2.0);
         })
     }
 
     #[test]
     fn test_sub_diff_parent_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, true);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), true);
         assert!(e2.requires_grad());
 
         let e3 = sub(&e1, &e2).unwrap();
@@ -308,7 +293,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], -1.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], -1.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
             assert_eq!(e2.get_grad().borrow()[pos[2]], 2.0 * 3.0);
@@ -317,12 +302,10 @@ mod binary_op_tests {
 
     #[test]
     fn test_sub_diff_parent_one_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, false);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
         assert!(!e2.requires_grad());
 
         let e3 = sub(&e1, &e2).unwrap();
@@ -337,7 +320,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], -1.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], -1.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0);
         })
@@ -345,13 +328,11 @@ mod binary_op_tests {
 
     #[test]
     fn test_sub_diff_parent_none_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), false);
+        assert!(!e1.requires_grad());
 
-        let e1 = ident(&v1, false);
-        assert!(!e1.requires_grad());
-        let e2 = ident(&v2, false);
-        assert!(!e1.requires_grad());
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
+        assert!(!e2.requires_grad());
 
         let e3 = sub(&e1, &e2).unwrap();
         assert!(!e3.requires_grad());
@@ -361,18 +342,17 @@ mod binary_op_tests {
         let Sub(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e3.var.data.borrow()[pos[0]], -1.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], -1.0);
         })
     }
 
     #[test]
     fn test_sub_same_parent_requires_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let e1 = ident(&v, true);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), true);
         assert!(e1.requires_grad());
 
         let e2 = sub(&e1, &e1).unwrap();
-        assert!(e1.requires_grad());
+        assert!(e2.requires_grad());
         e2.eval_fwd();
         e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
             *grad = -2.0;
@@ -383,7 +363,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e2.var.data.borrow()[pos[0]], 0.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 0.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], 0.0);
         })
@@ -391,29 +371,26 @@ mod binary_op_tests {
 
     #[test]
     fn test_sub_same_parent_no_require_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 1.0)));
-        let e1 = ident(&v, false);
+        let e1 = ident(Tensor::new(&[2, 3], 1.0), false);
         assert!(!e1.requires_grad());
 
         let e2 = sub(&e1, &e1).unwrap();
-        assert!(!e1.requires_grad());
+        assert!(!e2.requires_grad());
         e2.eval_fwd();
 
         let Sub(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e2.var.data.borrow()[pos[0]], 0.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 0.0);
         })
     }
 
     #[test]
     fn test_mul_diff_parent_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 4.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 4.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, true);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), true);
         assert!(e2.requires_grad());
 
         let e3 = mul(&e1, &e2).unwrap();
@@ -428,7 +405,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 8.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 * 2.0);
             assert_eq!(e2.get_grad().borrow()[pos[2]], -2.0 * 4.0 * 3.0);
@@ -437,12 +414,10 @@ mod binary_op_tests {
 
     #[test]
     fn test_mul_diff_parent_one_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 4.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
-
-        let e1 = ident(&v1, true);
+        let e1 = ident(Tensor::new(&[2, 3], 4.0), true);
         assert!(e1.requires_grad());
-        let e2 = ident(&v2, false);
+
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
         assert!(!e2.requires_grad());
 
         let e3 = mul(&e1, &e2).unwrap();
@@ -457,7 +432,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e3.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 8.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], -2.0 * 2.0);
         })
@@ -465,13 +440,11 @@ mod binary_op_tests {
 
     #[test]
     fn test_mul_diff_parent_none_requires_grad() {
-        let v1 = Rc::new(Var::from(Tensor::new(&[2, 3], 4.0)));
-        let v2 = Rc::new(Var::from(Tensor::new(&[2, 1], 2.0)));
+        let e1 = ident(Tensor::new(&[2, 3], 4.0), false);
+        assert!(!e1.requires_grad());
 
-        let e1 = ident(&v1, false);
-        assert!(!e1.requires_grad());
-        let e2 = ident(&v2, false);
-        assert!(!e1.requires_grad());
+        let e2 = ident(Tensor::new(&[2, 1], 2.0), false);
+        assert!(!e2.requires_grad());
 
         let e3 = mul(&e1, &e2).unwrap();
         assert!(!e3.requires_grad());
@@ -481,18 +454,17 @@ mod binary_op_tests {
         let Mul(op) = &e3.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e3.var.data.borrow()[pos[0]], 8.0);
+            assert_eq!(e3.storage.data.borrow()[pos[0]], 8.0);
         })
     }
 
     #[test]
     fn test_mul_same_parent_requires_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 4.0)));
-        let e1 = ident(&v, true);
+        let e1 = ident(Tensor::new(&[2, 3], 4.0), true);
         assert!(e1.requires_grad());
 
         let e2 = mul(&e1, &e1).unwrap();
-        assert!(e1.requires_grad());
+        assert!(e2.requires_grad());
         e2.eval_fwd();
         e2.get_grad().borrow_mut().iter_mut().for_each(|grad| {
             *grad = -2.0;
@@ -503,7 +475,7 @@ mod binary_op_tests {
 
         op.it.borrow_mut().for_each(|pos| {
             assert_eq!(e2.get_grad().borrow()[pos[0]], -2.0);
-            assert_eq!(e2.var.data.borrow()[pos[0]], 16.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 16.0);
 
             assert_eq!(e1.get_grad().borrow()[pos[1]], 2.0 * -2.0 * 4.0);
         })
@@ -511,18 +483,17 @@ mod binary_op_tests {
 
     #[test]
     fn test_mul_same_parent_no_require_grad() {
-        let v = Rc::new(Var::from(Tensor::new(&[2, 3], 4.0)));
-        let e1 = ident(&v, false);
+        let e1 = ident(Tensor::new(&[2, 3], 4.0), false);
         assert!(!e1.requires_grad());
 
         let e2 = mul(&e1, &e1).unwrap();
-        assert!(!e1.requires_grad());
+        assert!(!e2.requires_grad());
         e2.eval_fwd();
 
         let Mul(op) = &e2.op else { unreachable!() };
 
         op.it.borrow_mut().for_each(|pos| {
-            assert_eq!(e2.var.data.borrow()[pos[0]], 16.0);
+            assert_eq!(e2.storage.data.borrow()[pos[0]], 16.0);
         })
     }
 }

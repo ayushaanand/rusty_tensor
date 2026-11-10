@@ -15,7 +15,7 @@ use view::ViewOp;
 
 #[derive(Clone)]
 pub enum Op<T: TensorFType> {
-    Ident(IdentOp<T>),
+    Ident(IdentOp),
 
     Add(BinaryOp<T>),
     Sub(BinaryOp<T>),

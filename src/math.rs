@@ -1,60 +1,69 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::consts::*;
-use crate::math::op::Op;
-use crate::tensor::{Tensor, TensorMeta};
-use crate::types::SharedSlice;
+use crate::tensor::TensorMeta;
 
 mod op;
+use op::Op;
 
-// ------- Var -----------------------------------------------------------------
+// ------- Storage -----------------------------------------------------------------
 #[derive(Clone)]
-struct Var<T: TensorFType> {
-    meta: TensorMeta,
-    data: SharedSlice<T>,
+struct Storage<T> {
+    data: RefCell<Box<[T]>>,
+    grad: Option<RefCell<Box<[T]>>>,
 }
 
-impl<T: TensorFType> From<Tensor<T>> for Var<T> {
-    fn from(value: Tensor<T>) -> Self {
+impl<T: TensorDType> Storage<T> {
+    fn zeroes(len: usize, requires_grad: bool) -> Self {
+        let new_refcell_box = || RefCell::new(vec![T::zero(); len].into());
         Self {
-            meta: value.meta,
-            data: SharedSlice::new(value.data),
+            data: new_refcell_box(),
+            grad: requires_grad.then(new_refcell_box),
+        }
+    }
+
+    fn new_from(data: Box<[T]>, requires_grad: bool) -> Self {
+        Self {
+            grad: requires_grad.then(|| RefCell::new(vec![T::zero(); data.len()].into())),
+            data: RefCell::new(data),
         }
     }
 }
 
 // ------- Expr ----------------------------------------------------------------
 #[derive(Clone)]
-struct Expr<T: TensorFType> {
-    var: Var<T>,
-    // TODO: remove var and SharedSlice, data and Option<grad> should be in one Rc
-    grad: Option<SharedSlice<T>>,
+pub struct Expr<T: TensorFType> {
+    meta: TensorMeta,
+    storage: Rc<Storage<T>>,
     op: Op<T>,
 }
 
 impl<T: TensorFType> Expr<T> {
     pub fn requires_grad(&self) -> bool {
-        self.grad.is_some()
+        self.storage.grad.is_some()
     }
 
     /// Get the underlying grad buffer of expr
     ///
     /// # Panic:
     /// Panics if expr.[`requires_grad()`](requires_grad) == false
-    fn get_grad(&self) -> &SharedSlice<T> {
-        self.grad.as_ref().unwrap()
+    fn get_grad(&self) -> &RefCell<Box<[T]>> {
+        self.storage.grad.as_ref().unwrap()
     }
 }
 
 impl<T: TensorFType> Expr<T> {
     fn eval_fwd(&self) {
-        self.op.fwd(&mut self.var.data.borrow_mut());
+        self.op.fwd(&mut self.storage.data.borrow_mut());
     }
     fn eval_bwd(&self) {
-        let Some(grad) = &self.grad else {
+        let Some(grad) = &self.storage.grad else {
             return;
         };
 
         // TODO: expr requires_grad, ie one parent must require too (if expr not ident)
         //       may be optimizable
-        self.op.bwd(&grad.borrow(), &self.var.data.borrow());
+        self.op.bwd(&grad.borrow(), &self.storage.data.borrow());
     }
 }

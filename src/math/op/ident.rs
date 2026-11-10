@@ -1,23 +1,16 @@
 use crate::consts::*;
-use crate::math::{Expr, Var, op::Op};
-use crate::types::SharedSlice;
+use crate::math::{Expr, Storage, op::Op};
+use crate::tensor::Tensor;
+
 use std::rc::Rc;
 
 #[derive(Clone)]
-pub(crate) struct IdentOp<T: TensorFType> {
-    input: Rc<Var<T>>,
-}
+pub(crate) struct IdentOp;
 
-pub fn ident<T: TensorFType>(input: &Rc<Var<T>>, requires_grad: bool) -> Rc<Expr<T>> {
-    let op = Op::Ident(IdentOp {
-        input: Rc::clone(input),
-    });
-
-    let grad = requires_grad.then(|| SharedSlice::zeroes(input.meta.total_elems));
-
+pub fn ident<T: TensorFType>(input: Tensor<T>, requires_grad: bool) -> Rc<Expr<T>> {
     Rc::new(Expr {
-        var: Var::clone(input),
-        grad,
-        op,
+        meta: input.meta,
+        storage: Rc::new(Storage::new_from(input.data, requires_grad)),
+        op: Op::Ident(IdentOp),
     })
 }

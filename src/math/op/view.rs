@@ -1,11 +1,11 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::RangeError;
 use crate::iterator::TensorIter;
-use crate::math::op::Op;
-use crate::math::{Expr, Var};
+use crate::math::{Expr, op::Op};
 use crate::tensor::TensorMeta;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[derive(Clone)]
 pub(super) struct ViewOp<T: TensorFType> {
@@ -21,16 +21,13 @@ fn build_view_op<T: TensorFType>(
     let grad_meta = TensorMeta::new(&new_meta.shape);
     let it = RefCell::new(TensorIter::new([&grad_meta, &new_meta], 0)?);
     let op = op_var(ViewOp {
-        input: input.clone(),
+        input: Rc::clone(input),
         it,
     });
 
     Ok(Rc::new(Expr {
-        var: Var {
-            meta: new_meta,
-            data: input.var.data.clone(),
-        },
-        grad: input.grad.clone(),
+        storage: Rc::clone(&input.storage),
+        meta: new_meta,
         op,
     }))
 }
@@ -40,7 +37,7 @@ pub fn transpose<T: TensorFType>(
     i: usize,
     j: usize,
 ) -> TensorResult<Rc<Expr<T>>> {
-    let mut new_meta = input.var.meta.clone();
+    let mut new_meta = input.meta.clone();
     new_meta.shape.swap(i, j);
     new_meta.stride.swap(i, j);
 
@@ -107,7 +104,7 @@ fn slice<T: TensorFType>(
     input: &Rc<Expr<T>>,
     ranges: &[SlicingRange],
 ) -> TensorResult<Rc<Expr<T>>> {
-    let mut new_meta = input.var.meta.clone();
+    let mut new_meta = input.meta.clone();
 
     if ranges.len() > new_meta.shape.len() {
         return Err(RangeError);
@@ -138,21 +135,19 @@ mod tests {
     #[test]
     fn test_transpose() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
             true,
         );
 
         let e2 = transpose(&e1, 0, 1).unwrap();
-        assert_eq!(&*e2.var.meta.shape, &[3, 2, 4]);
+        assert_eq!(&*e2.meta.shape, &[3, 2, 4]);
 
         let Op::Transpose(op) = &e2.op else {
             unreachable!()
         };
 
         let mut v = Vec::new();
-        let e2data = e2.var.data.borrow();
+        let e2data = e2.storage.data.borrow();
 
         op.it.borrow_mut().for_each(|pos| {
             v.push(e2data[pos[1]]);
@@ -171,14 +166,12 @@ mod tests {
     #[test]
     fn test_slicing() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 3, 4], (0..24).map(|i| i as f32)).unwrap(),
             true,
         );
 
         let e2 = slice(&e1, &ranges![.., 2.., ..=1]).unwrap();
-        assert_eq!(&*e2.var.meta.shape, &[2, 1, 2]);
+        assert_eq!(&*e2.meta.shape, &[2, 1, 2]);
         e2.eval_fwd();
         let Op::Slice(ViewOp { it, .. }) = &e2.op else {
             unreachable!()
@@ -201,7 +194,7 @@ mod tests {
         );
 
         let mut v = Vec::new();
-        let e2data = e2.var.data.borrow();
+        let e2data = e2.storage.data.borrow();
 
         it.borrow_mut().for_each(|pos| {
             v.push(e2data[pos[1]]);
@@ -213,9 +206,7 @@ mod tests {
     #[test]
     fn test_view_add() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 3], (1..=9).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[3, 3], (1..=9).map(|i| i as f32)).unwrap(),
             true,
         );
         let e2 = transpose(&e1, 0, 1).unwrap();

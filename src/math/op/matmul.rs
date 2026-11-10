@@ -2,9 +2,8 @@ use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::{SizeType, TensorFType, TensorResult};
 use crate::error::MatmulShapeError;
 use crate::iterator::TensorIter;
-use crate::math::{Expr, Var, op};
+use crate::math::{Expr, Storage, op};
 use crate::tensor::TensorMeta;
-use crate::types::SharedSlice;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,13 +18,13 @@ pub(crate) struct MatMulOp<T: TensorFType> {
 }
 
 pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
-    const SKIP: usize = 2;
+    const SKIP_DIMS: usize = 2;
 
     let inputs = [a, b];
-    let shapes: [_; 2] = inputs.map(|expr| expr.var.meta.shape.as_slice());
-    let lens: [_; 2] = shapes.map(|sh| sh.len());
+    let shapes = inputs.map(|expr| expr.meta.shape.as_slice());
+    let lens = shapes.map(|sh| sh.len());
 
-    let mut out_shape = compute_broadcast_shape_const(shapes, SKIP)?;
+    let mut out_shape = compute_broadcast_shape_const(shapes, SKIP_DIMS)?;
     let out_len = out_shape.len();
 
     // shapes.len() >= 2 is guaranteed due to skip_dims
@@ -43,8 +42,8 @@ pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<E
     let out_meta = TensorMeta::new(out_shape.as_slice());
 
     let it = RefCell::new(TensorIter::new(
-        std::iter::once(&out_meta).chain(inputs.map(|expr| &expr.var.meta)),
-        SKIP,
+        std::iter::once(&out_meta).chain(inputs.map(|expr| &expr.meta)),
+        SKIP_DIMS,
     )?);
 
     let mat_dims = (m, p, n);
@@ -55,17 +54,12 @@ pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<E
         mat_dims,
     });
 
-    let grad = inputs
-        .iter()
-        .any(|expr| expr.requires_grad())
-        .then(|| SharedSlice::zeroes(out_meta.total_elems));
-
     Ok(Rc::new(Expr {
-        var: Var {
-            data: SharedSlice::zeroes(out_meta.total_elems),
-            meta: out_meta,
-        },
-        grad,
+        storage: Rc::new(Storage::zeroes(
+            out_meta.total_elems,
+            a.requires_grad() || b.requires_grad(),
+        )),
+        meta: out_meta,
         op,
     }))
 }
@@ -75,7 +69,7 @@ impl<T: TensorFType> MatMulOp<T> {
         let (m, p, n) = self.mat_dims;
 
         fn inner_strides<T: TensorFType>(arg: &Rc<Expr<T>>) -> [SizeType; 2] {
-            *arg.var.meta.stride.last_chunk::<2>().unwrap()
+            *arg.meta.stride.last_chunk::<2>().unwrap()
         }
 
         let inner_a_strides = inner_strides(&self.a);
@@ -92,7 +86,7 @@ impl<T: TensorFType> MatMulOp<T> {
                     for j in 0..n {
                         let r_idx = r_row + j;
                         let b_idx = b_row + j * inner_b_strides[1];
-                        // let r_idx = r_offset + i * n + j * 1;
+                        // let r_idx = r_offset + i * n                  + j * 1;
                         // let a_idx = a_offset + i * inner_a_strides[0] + k * inner_a_strides[1];
                         // let b_idx = b_offset + k * inner_b_strides[0] + j * inner_b_strides[1];
                         f(r_idx, a_idx, b_idx);
@@ -103,8 +97,8 @@ impl<T: TensorFType> MatMulOp<T> {
     }
 
     pub(crate) fn fwd(&self, out: &mut [T]) {
-        let a_data = self.a.var.data.borrow();
-        let b_data = self.b.var.data.borrow();
+        let a_data = self.a.storage.data.borrow();
+        let b_data = self.b.storage.data.borrow();
 
         self.mm_loop(|r_idx, a_idx, b_idx| {
             out[r_idx] += a_data[a_idx] * b_data[b_idx];
@@ -112,25 +106,27 @@ impl<T: TensorFType> MatMulOp<T> {
     }
 
     pub(crate) fn bwd(&self, grad: &[T]) {
-        let a_data = &*self.a.var.data.borrow();
-        let b_data = &*self.b.var.data.borrow();
-
         // Rc::ptr_eq on expr branch is removed since uniform indexing optimization is not possible in matmul
         // write must be done through both indices, which is done in grad aliased case anyway
 
-        // different parents, one may not require grad
-        match [&self.a.grad, &self.b.grad] {
-            [Some(a_grad), Some(b_grad)] => {
-                // both require grad, but grads may be shared ie A * A^T
-                if SharedSlice::ptr_eq(a_grad, b_grad) {
-                    // grads are shared, but uniform indexing not possible due to view changes
-                    let parent_grad = &mut *a_grad.borrow_mut();
-                    let parent_data = a_data;
-                    self.mm_loop(|r_idx, a_idx, b_idx| {
-                        parent_grad[a_idx] += grad[r_idx] * parent_data[b_idx];
-                        parent_grad[b_idx] += parent_data[a_idx] * grad[r_idx];
-                    })
-                } else {
+        if Rc::ptr_eq(&self.a.storage, &self.b.storage) {
+            // grads are shared, but uniform indexing not possible due to view changes
+            if let Some(parent_grad) = &self.a.storage.grad {
+                let parent_grad = &mut *parent_grad.borrow_mut();
+                let parent_data = &*self.a.storage.data.borrow();
+                self.mm_loop(|r_idx, a_idx, b_idx| {
+                    parent_grad[a_idx] += grad[r_idx] * parent_data[b_idx];
+                    parent_grad[b_idx] += parent_data[a_idx] * grad[r_idx];
+                })
+            } else { /* unreachable!() */
+            }
+        } else {
+            let a_data = &*self.a.storage.data.borrow();
+            let b_data = &*self.b.storage.data.borrow();
+
+            // different parents, one may not require grad
+            match [&self.a.storage.grad, &self.b.storage.grad] {
+                [Some(a_grad), Some(b_grad)] => {
                     // separate grads, borrow_mut and index separately
                     let a_grad = &mut *a_grad.borrow_mut();
                     let b_grad = &mut *b_grad.borrow_mut();
@@ -140,21 +136,21 @@ impl<T: TensorFType> MatMulOp<T> {
                         b_grad[b_idx] += a_data[a_idx] * grad[r_idx];
                     })
                 }
+                // now only one requires_grad, borrow and index accordingly
+                [Some(a_grad), None] => {
+                    let a_grad = &mut *a_grad.borrow_mut();
+                    self.mm_loop(|r_idx, a_idx, b_idx| {
+                        a_grad[a_idx] += grad[r_idx] * b_data[b_idx];
+                    })
+                }
+                [None, Some(b_grad)] => {
+                    let b_grad = &mut *b_grad.borrow_mut();
+                    self.mm_loop(|r_idx, a_idx, b_idx| {
+                        b_grad[b_idx] += a_data[a_idx] * grad[r_idx];
+                    })
+                }
+                [None, None] => { /* unreachable!() */ }
             }
-            // now only one requires_grad, borrow and index accordingly
-            [Some(a_grad), None] => {
-                let a_grad = &mut *a_grad.borrow_mut();
-                self.mm_loop(|r_idx, a_idx, b_idx| {
-                    a_grad[a_idx] += grad[r_idx] * b_data[b_idx];
-                })
-            }
-            [None, Some(b_grad)] => {
-                let b_grad = &mut *b_grad.borrow_mut();
-                self.mm_loop(|r_idx, a_idx, b_idx| {
-                    b_grad[b_idx] += a_data[a_idx] * grad[r_idx];
-                })
-            }
-            [None, None] => { /* unreachable!() */ }
         }
     }
 }
@@ -202,28 +198,24 @@ mod tests {
     #[test]
     fn test_matmul() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
             true,
         );
         let e2 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
             true,
         );
 
         let e3 = mm(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[2, 2]);
+        assert_eq!(e3.meta.shape.as_slice(), &[2, 2]);
         e3.eval_fwd();
         e3.get_grad()
             .borrow_mut()
             .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
         e3.eval_bwd();
 
-        assert_allclose!(e3.var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+        assert_allclose!(e3.storage.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
         assert_allclose!(e1.get_grad().borrow(), &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]);
         assert_allclose!(e2.get_grad().borrow(), &[3.5, 0.2, 4.0, 0.1, 4.5, 0.0]);
     }
@@ -231,22 +223,17 @@ mod tests {
     #[test]
     fn test_matmul_broadcast() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 2, 3], repeat_n((1..=6).map(|i| i as f32), 3).flatten())
-                    .unwrap(),
-            )),
+            Tensor::from_buf(&[3, 2, 3], repeat_n((1..=6).map(|i| i as f32), 3).flatten()).unwrap(),
             true,
         );
         let e2 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
             true,
         );
 
         let e3 = mm(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[3, 2, 2]);
+        assert_eq!(e3.meta.shape.as_slice(), &[3, 2, 2]);
         e3.eval_fwd();
         e3.get_grad()
             .borrow_mut()
@@ -254,7 +241,7 @@ mod tests {
         e3.eval_bwd();
 
         assert_allclose!(
-            e3.var.data.borrow(),
+            e3.storage.data.borrow(),
             &repeat_slice(&[20.0_f32, 14.0, 56.0, 41.0], 3)
         );
         assert_allclose!(
@@ -270,105 +257,93 @@ mod tests {
     #[test]
     fn test_matmul_only_one_require_grad() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
             true,
         );
         assert!(e1.requires_grad());
         let e2 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
             false,
         );
         assert!(!e2.requires_grad());
 
         let e3 = mm(&e1, &e2).unwrap();
         assert!(e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[2, 2]);
+        assert_eq!(e3.meta.shape.as_slice(), &[2, 2]);
         e3.eval_fwd();
         e3.get_grad()
             .borrow_mut()
             .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
         e3.eval_bwd();
 
-        assert_allclose!(e3.var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+        assert_allclose!(e3.storage.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
         assert_allclose!(e1.get_grad().borrow(), &[-4.0, -2.6, -1.2, 6.5, 4.3, 2.1]);
-        assert!(e2.grad.is_none());
+        assert!(e2.storage.grad.is_none());
     }
 
     #[test]
     fn test_matmul_none_require_grad() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 3], (1..=6).map(|i| i as f32)).unwrap(),
             false,
         );
         assert!(!e1.requires_grad());
         let e2 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[3, 2], (1..=6).rev().map(|i| i as f32)).unwrap(),
             false,
         );
         assert!(!e2.requires_grad());
 
         let e3 = mm(&e1, &e2).unwrap();
         assert!(!e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[2, 2]);
+        assert_eq!(e3.meta.shape.as_slice(), &[2, 2]);
         e3.eval_fwd();
         e3.eval_bwd();
 
-        assert_allclose!(e3.var.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
+        assert_allclose!(e3.storage.data.borrow(), &[20.0, 14.0, 56.0, 41.0]);
     }
 
     #[test]
     fn test_matmul_same_parent() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(&[2, 2], (1..=4).map(|i| i as f32)).unwrap(),
-            )),
+            Tensor::from_buf(&[2, 2], (1..=4).map(|i| i as f32)).unwrap(),
             true,
         );
         assert!(e1.requires_grad());
 
         let e3 = mm(&e1, &e1).unwrap();
         assert!(e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[2, 2]);
+        assert_eq!(e3.meta.shape.as_slice(), &[2, 2]);
         e3.eval_fwd();
         e3.get_grad()
             .borrow_mut()
             .copy_from_slice(&[-0.5, -0.2, 1.0, 0.1]);
         e3.eval_bwd();
 
-        assert_allclose!(e3.var.data.borrow(), &[7.0, 10.0, 15.0, 22.0]);
+        assert_allclose!(e3.storage.data.borrow(), &[7.0, 10.0, 15.0, 22.0]);
         assert_allclose!(e1.get_grad().borrow(), &[1.6, -2.2, 4.2, 3.4]);
     }
 
     #[test]
     fn test_matmul_same_parent_no_grad() {
         let e1 = ident(
-            &Rc::new(Var::from(
-                Tensor::from_buf(
-                    &[3, 3],
-                    [5.0_f32, -0.1, 3.2, 4.9, 7.0, -2.3, -4.3, 1.2, -7.8],
-                )
-                .unwrap(),
-            )),
+            Tensor::from_buf(
+                &[3, 3],
+                [5.0_f32, -0.1, 3.2, 4.9, 7.0, -2.3, -4.3, 1.2, -7.8],
+            )
+            .unwrap(),
             false,
         );
         assert!(!e1.requires_grad());
 
         let e3 = mm(&e1, &e1).unwrap();
         assert!(!e3.requires_grad());
-        assert_eq!(e3.var.meta.shape.as_slice(), &[3, 3]);
+        assert_eq!(e3.meta.shape.as_slice(), &[3, 3]);
         e3.eval_fwd();
         e3.eval_bwd();
 
         assert_allclose!(
-            e3.var.data.borrow(),
+            e3.storage.data.borrow(),
             &[10.75, 2.64, -8.73, 68.69, 45.75, 17.52, 17.92, -0.53, 44.32]
         );
     }
