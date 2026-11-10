@@ -55,6 +55,6 @@ impl<T: TensorFType> Expr<T> {
 
         // TODO: expr requires_grad, ie one parent must require too (if expr not ident)
         //       may be optimizable
-        self.op.bwd(&*grad.borrow(), &self.var.data.borrow());
+        self.op.bwd(&grad.borrow(), &self.var.data.borrow());
     }
 }

@@ -5,7 +5,7 @@ mod matmul;
 mod unary;
 mod view;
 
-use crate::{consts::TensorFType, iterator::TensorIter};
+use crate::consts::TensorFType;
 use binary::BinaryOp;
 use custom_unary::CustomUnaryOp;
 use ident::IdentOp;

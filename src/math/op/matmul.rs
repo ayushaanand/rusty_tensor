@@ -47,7 +47,7 @@ pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<E
         SKIP,
     )?);
 
-    let mat_dims = (m as usize, p as usize, n as usize);
+    let mat_dims = (m, p, n);
     let op = op::Op::MatMul(MatMulOp {
         a: Rc::clone(a),
         b: Rc::clone(b),

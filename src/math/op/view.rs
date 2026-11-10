@@ -4,7 +4,6 @@ use crate::iterator::TensorIter;
 use crate::math::op::Op;
 use crate::math::{Expr, Var};
 use crate::tensor::TensorMeta;
-use crate::types::SharedSlice;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -117,11 +116,11 @@ fn slice<T: TensorFType>(
     let offset = &mut new_meta.offset;
     let shape_it = new_meta.shape.as_mut_slice().iter_mut();
     let stride_it = new_meta.stride.as_mut_slice().iter_mut();
-    for ((shape, stride), range) in shape_it.zip(stride_it).zip(ranges.into_iter()) {
+    for ((shape, stride), range) in shape_it.zip(stride_it).zip(ranges) {
         let (start, end) = range.to_tuple(*shape);
 
         *offset += start * *stride;
-        *shape = if end > start { end - start } else { 0 };
+        *shape = end.saturating_sub(start);
     }
 
     new_meta.total_elems = new_meta.shape.iter().product();

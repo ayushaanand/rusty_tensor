@@ -31,7 +31,7 @@ fn build_binary_op<T: TensorFType>(
     )?);
 
     let op = op_var(BinaryOp {
-        input: inputs.map(|expr| Rc::clone(expr)),
+        input: inputs.map(Rc::clone),
         it,
     });
 
