@@ -84,11 +84,11 @@ impl<T: TensorFType> BinaryOp<T> {
         })
     }
 
-    pub fn bwd_unified<F0, F1>(&self, grad: &[T], f_0: F0, f_1: F1)
+    fn bwd_unified<F0, F1>(&self, grad: &[T], f_0: F0, f_1: F1)
     where
         // Fn(&mut this_mut_grad, bwd_grad, other_parent_data)
-        F0: Fn(&mut T, T, T),
-        F1: Fn(&mut T, T, T),
+        F0: Fn(T, T) -> T,
+        F1: Fn(T, T) -> T,
     {
         let it = &mut *self.it.borrow_mut();
         let parent_datas = self.input.each_ref().map(|expr| expr.var.data.borrow());
@@ -98,16 +98,9 @@ impl<T: TensorFType> BinaryOp<T> {
             if let Some(parent_grad) = &self.input[0].grad {
                 let parent_grad = &mut *parent_grad.borrow_mut();
                 it.for_each(|pos| {
-                    f_0(
-                        &mut parent_grad[pos[1]],
-                        grad[pos[0]],
-                        parent_datas[0][pos[1]],
-                    );
-                    f_1(
-                        &mut parent_grad[pos[1]],
-                        grad[pos[0]],
-                        parent_datas[0][pos[1]],
-                    );
+                    let tot_grad = f_0(grad[pos[0]], parent_datas[0][pos[1]])
+                        + f_1(grad[pos[0]], parent_datas[0][pos[1]]);
+                    parent_grad[pos[1]] += tot_grad;
                 })
             } else { /* unreachable!() */
             }
@@ -121,31 +114,15 @@ impl<T: TensorFType> BinaryOp<T> {
                         let parent_grad = &mut *p_grad1.borrow_mut();
                         it.for_each(|pos| {
                             // parent.var.data can also be assumed aliased, because grads are too
-                            f_0(
-                                &mut parent_grad[pos[1]],
-                                grad[pos[0]],
-                                parent_datas[0][pos[2]],
-                            );
-                            f_1(
-                                &mut parent_grad[pos[2]],
-                                grad[pos[0]],
-                                parent_datas[0][pos[1]],
-                            );
+                            parent_grad[pos[1]] += f_0(grad[pos[0]], parent_datas[0][pos[2]]);
+                            parent_grad[pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
                         })
                     } else {
                         // separate grads, borrow and index separately
                         let mut parent_grads = [p_grad1, p_grad2].map(|grad| grad.borrow_mut());
                         it.for_each(|pos| {
-                            f_0(
-                                &mut parent_grads[0][pos[1]],
-                                grad[pos[0]],
-                                parent_datas[1][pos[2]],
-                            );
-                            f_1(
-                                &mut parent_grads[1][pos[2]],
-                                grad[pos[0]],
-                                parent_datas[0][pos[1]],
-                            );
+                            parent_grads[0][pos[1]] += f_0(grad[pos[0]], parent_datas[1][pos[2]]);
+                            parent_grads[1][pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
                         })
                     }
                 }
@@ -153,21 +130,13 @@ impl<T: TensorFType> BinaryOp<T> {
                 [Some(p_grad1), None] => {
                     let parent_grad = &mut *p_grad1.borrow_mut();
                     it.for_each(|pos| {
-                        f_0(
-                            &mut parent_grad[pos[1]],
-                            grad[pos[0]],
-                            parent_datas[1][pos[2]],
-                        );
+                        parent_grad[pos[1]] += f_0(grad[pos[0]], parent_datas[1][pos[2]]);
                     })
                 }
                 [None, Some(p_grad2)] => {
                     let parent_grad = &mut *p_grad2.borrow_mut();
                     it.for_each(|pos| {
-                        f_1(
-                            &mut parent_grad[pos[2]],
-                            grad[pos[0]],
-                            parent_datas[0][pos[1]],
-                        );
+                        parent_grad[pos[2]] += f_1(grad[pos[0]], parent_datas[0][pos[1]]);
                     })
                 }
                 [None, None] => { /* unreachable!() */ }
@@ -176,15 +145,18 @@ impl<T: TensorFType> BinaryOp<T> {
     }
 
     pub fn add_bwd(&self, grad: &[T]) {
-        self.bwd_unified(grad, |g1, g, _| *g1 += g, |g2, g, _| *g2 += g)
+        self.bwd_unified(grad, |g, _| g, |g, _| g)
     }
 
     pub fn sub_bwd(&self, grad: &[T]) {
-        self.bwd_unified(grad, |g1, g, _| *g1 += g, |g2, g, _| *g2 -= g)
+        // Rc::ptr_eq on expr => grad += x - x situation, no-op in normal fp
+        if !Rc::ptr_eq(&self.input[0], &self.input[1]) {
+            self.bwd_unified(grad, |g, _| g, |g, _| -g)
+        }
     }
 
     pub fn mul_bwd(&self, grad: &[T]) {
-        self.bwd_unified(grad, |g1, g, d2| *g1 += g * d2, |g2, g, d1| *g2 += g * d1)
+        self.bwd_unified(grad, |g, d2| g * d2, |g, d1| g * d1)
     }
 }
 
