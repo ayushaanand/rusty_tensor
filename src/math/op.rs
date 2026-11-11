@@ -1,9 +1,9 @@
-mod binary;
-mod custom_unary;
-mod ident;
-mod matmul;
-mod unary;
-mod view;
+pub mod binary;
+pub mod custom_unary;
+pub mod ident;
+pub mod matmul;
+pub mod unary;
+pub mod view;
 
 use crate::consts::TensorFType;
 use binary::BinaryOp;
@@ -14,7 +14,7 @@ use unary::UnaryOp;
 use view::ViewOp;
 
 #[derive(Clone)]
-pub enum Op<T: TensorFType> {
+pub(crate) enum Op<T: TensorFType> {
     Ident(IdentOp),
 
     Add(BinaryOp<T>),

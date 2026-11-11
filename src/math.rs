@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::consts::*;
 use crate::tensor::TensorMeta;
 
-mod op;
+pub mod op;
 use op::Op;
 
 // ------- Storage -----------------------------------------------------------------
@@ -44,6 +44,7 @@ impl<T: TensorFType> Expr<T> {
         self.storage.grad.is_some()
     }
 
+    #[cfg(test)]
     /// Get the underlying grad buffer of expr
     ///
     /// # Panic:
@@ -54,10 +55,11 @@ impl<T: TensorFType> Expr<T> {
 }
 
 impl<T: TensorFType> Expr<T> {
-    fn eval_fwd(&self) {
+    pub fn eval_fwd(&self) {
         self.op.fwd(&mut self.storage.data.borrow_mut());
     }
-    fn eval_bwd(&self) {
+
+    pub fn eval_bwd(&self) {
         let Some(grad) = &self.storage.grad else {
             return;
         };

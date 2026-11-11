@@ -1,16 +1,13 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::consts::{TensorFType, TensorResult};
 use crate::error::RangeError;
-use crate::iterator::TensorIter;
 use crate::math::{Expr, op::Op};
 use crate::tensor::TensorMeta;
 
 #[derive(Clone)]
-pub(super) struct ViewOp<T: TensorFType> {
+pub(crate) struct ViewOp<T: TensorFType> {
     input: Rc<Expr<T>>,
-    it: RefCell<TensorIter>,
 }
 
 fn build_view_op<T: TensorFType>(
@@ -18,11 +15,8 @@ fn build_view_op<T: TensorFType>(
     new_meta: TensorMeta,
     op_var: impl FnOnce(ViewOp<T>) -> Op<T>,
 ) -> TensorResult<Rc<Expr<T>>> {
-    let grad_meta = TensorMeta::new(&new_meta.shape);
-    let it = RefCell::new(TensorIter::new([&grad_meta, &new_meta], 0)?);
     let op = op_var(ViewOp {
         input: Rc::clone(input),
-        it,
     });
 
     Ok(Rc::new(Expr {
@@ -45,7 +39,7 @@ pub fn transpose<T: TensorFType>(
 }
 
 // ------- Slicing ----------------------------------------------------
-enum SlicingRange {
+pub enum SlicingRange {
     Range(std::ops::Range<usize>),
     RangeInclusive(std::ops::RangeInclusive<usize>),
     RangeFrom(std::ops::RangeFrom<usize>),
@@ -100,7 +94,7 @@ macro_rules! ranges {
     ($($range:expr),* $(,)?) => { [$($crate::math::op::view::SlicingRange::from($range)),*] };
 }
 
-fn slice<T: TensorFType>(
+pub fn slice<T: TensorFType>(
     input: &Rc<Expr<T>>,
     ranges: &[SlicingRange],
 ) -> TensorResult<Rc<Expr<T>>> {
@@ -129,6 +123,7 @@ mod tests {
     use super::*;
 
     use crate::assert_allclose;
+    use crate::iterator::TensorIter;
     use crate::math::op::{binary::add, ident::ident};
     use crate::tensor::Tensor;
 
@@ -139,27 +134,38 @@ mod tests {
             true,
         );
 
+        #[rustfmt::skip]
+        assert_allclose!(e1.storage.data.borrow(),
+            [0.0,  1.0,  2.0,  3.0,
+             4.0,  5.0,  6.0,  7.0,
+             8.0,  9.0, 10.0, 11.0,
+
+            12.0, 13.0, 14.0, 15.0,
+            16.0, 17.0, 18.0, 19.0,
+            20.0, 21.0, 22.0, 23.0]
+        );
+
         let e2 = transpose(&e1, 0, 1).unwrap();
         assert_eq!(&*e2.meta.shape, &[3, 2, 4]);
-
-        let Op::Transpose(op) = &e2.op else {
-            unreachable!()
-        };
 
         let mut v = Vec::new();
         let e2data = e2.storage.data.borrow();
 
-        op.it.borrow_mut().for_each(|pos| {
-            v.push(e2data[pos[1]]);
+        let mut it = TensorIter::new_logical([&e2.meta], 0).unwrap();
+        it.for_each(|pos| {
+            v.push(e2data[pos[0]]);
         });
 
-        assert_allclose!(
-            v,
-            &[0.0, 12.0, 4.0, 16.0, 8.0, 20.0]
-                .into_iter()
-                .map(|x| (0..4).map(move |i| x + (i as f32)))
-                .flatten()
-                .collect::<Vec<_>>()
+        #[rustfmt::skip]
+        assert_allclose!(v,
+            [0.0,  1.0,  2.0,  3.0,
+            12.0, 13.0, 14.0, 15.0,
+            
+             4.0,  5.0,  6.0,  7.0,
+            16.0, 17.0, 18.0, 19.0,
+
+             8.0,  9.0, 10.0, 11.0,
+            20.0, 21.0, 22.0, 23.0]
         );
     }
 
@@ -173,11 +179,10 @@ mod tests {
         let e2 = slice(&e1, &ranges![.., 2.., ..=1]).unwrap();
         assert_eq!(&*e2.meta.shape, &[2, 1, 2]);
         e2.eval_fwd();
-        let Op::Slice(ViewOp { it, .. }) = &e2.op else {
-            unreachable!()
-        };
-        it.borrow_mut().for_each(|pos| {
-            e2.get_grad().borrow_mut()[pos[1]] += -9.0;
+
+        let mut it = TensorIter::new([&e2.meta], 0).unwrap();
+        it.for_each(|pos| {
+            e2.get_grad().borrow_mut()[pos[0]] += -9.0;
         });
         e2.eval_bwd();
 
@@ -196,8 +201,8 @@ mod tests {
         let mut v = Vec::new();
         let e2data = e2.storage.data.borrow();
 
-        it.borrow_mut().for_each(|pos| {
-            v.push(e2data[pos[1]]);
+        it.for_each(|pos| {
+            v.push(e2data[pos[0]]);
         });
 
         assert_allclose!(v, &[8.0, 9.0, 20.0, 21.0]);

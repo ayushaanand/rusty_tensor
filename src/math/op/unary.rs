@@ -13,7 +13,7 @@ pub(crate) struct UnaryOp<T: TensorFType> {
     it: RefCell<TensorIter>,
 }
 
-pub fn build_unary_op<T: TensorFType>(
+pub(super) fn build_unary_op<T: TensorFType>(
     input: &Rc<Expr<T>>,
     op_var: impl FnOnce(UnaryOp<T>) -> Op<T>,
 ) -> TensorResult<Rc<Expr<T>>> {
@@ -33,16 +33,20 @@ pub fn build_unary_op<T: TensorFType>(
     }))
 }
 
-fn relu<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
+pub fn relu<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_unary_op(input, Op::ReLu)
 }
 
-fn silu<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
+pub fn silu<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_unary_op(input, Op::SiLu)
 }
 
-fn sigmoid<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
+pub fn sigmoid<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
     build_unary_op(input, Op::Sigmoid)
+}
+
+pub fn softplus<T: TensorFType>(input: &Rc<Expr<T>>) -> TensorResult<Rc<Expr<T>>> {
+    build_unary_op(input, Op::Softplus)
 }
 
 impl<T: TensorFType> UnaryOp<T> {

@@ -41,8 +41,6 @@ pub struct TensorIter {
     pub(crate) offsets: SmallSlice<SizeType>,
     pub(crate) out_shape: SmallSlice<DimType>,
     pub(crate) arg_strides: SmallSlice<SmallSlice<SizeType>>,
-    /// `true` after all logical positions have been visited.
-    /// Do not call [`advance`](TensorIter::advance) when `done` is `true`.
     pub done: bool,
 }
 
@@ -98,32 +96,44 @@ impl TensorIter {
     {
         let it = args.into_iter();
         // 1, 2, 3
-        if let Some(e) = IterBuilder::is_err(it.clone(), skip_dims) {
-            return Err(e);
-        }
+        IterBuilder::is_err(it.clone(), skip_dims)?;
 
         // 4, 5
-        let mut builder = IterBuilder::new(it, skip_dims)?;
+        let builder = IterBuilder::new(it, skip_dims)?;
 
-        // 6. eliminate trivial dims: keep only indices d where broadcasted_shape[d] != 1
-        builder.part(1);
+        Ok(builder
+            // 6. eliminate trivial dims: keep only indices d where broadcasted_shape[d] != 1
+            .part(1)
+            // 7. if arg.shape[i] == 1, arg.stride[i] = 0
+            .zero_broadcasted_dims()
+            // 8. compute permutation from arg[0].stride (assuming arg[0] is hotter): stride == 0s first, then descending by stride value
+            .sort_by_stride_of::<0>()
+            // 10. coalesce adjacent dims d, d+1 (after permutation): merge iff for every arg:
+            //      stride[d] == stride[d+1] * shape[d+1]
+            //      on merge: shape[d+1] *= shape[d], out_shape[d] = 0, drop d
+            .coalesce_dims()
+            // 11. build final out_shape and arg_strides, remove extra dims
+            .shrink_to_fit()
+            // 12. build rest fields
+            .build())
+    }
 
-        // 7. if arg.shape[i] == 1, arg.stride[i] = 0
-        builder.zero_broadcasted_dims();
-
-        // 8. compute permutation from arg[0].stride (assuming arg[0] is hotter): stride == 0s first, then descending by stride value
-        builder.sort_by_stride_of::<0>();
-
-        // 10. coalesce adjacent dims d, d+1 (after permutation): merge iff for every arg:
-        //      stride[d] == stride[d+1] * shape[d+1]
-        //      on merge: shape[d+1] *= shape[d], out_shape[d] = 0, drop d
-        builder.coalesce_dims();
-
-        // 11. build final out_shape and arg_strides, remove extra dims
-        builder.shrink_to_fit();
-
-        // 12. build rest fields
-        Ok(builder.build())
+    pub fn new_logical<'a, I>(args: I, skip_dims: usize) -> TensorResult<Self>
+    where
+        I: IntoIterator<Item = &'a TensorMeta>,
+        I::IntoIter: Clone,
+    {
+        let it = args.into_iter();
+        IterBuilder::is_err(it.clone(), skip_dims)?;
+        let builder = IterBuilder::new(it, skip_dims)?;
+        Ok(builder
+            .part(1)
+            .zero_broadcasted_dims()
+            // sorting omitted to retain logical ordering
+            // .sort_by_stride_of::<0>();
+            .coalesce_dims()
+            .shrink_to_fit()
+            .build())
     }
 
     pub fn from_tensors<'a, I, T>(args: I, skip_dims: usize) -> TensorResult<Self>
@@ -250,25 +260,25 @@ struct IterBuilder {
 }
 
 impl IterBuilder {
-    fn is_err<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> Option<TensorError> {
+    fn is_err<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> Result<(), TensorError> {
         // 1. args.is_empty() -> return None
         let args_len = args.clone().count();
         if args_len == 0 {
-            return Some(UnexEmptyInputError);
+            return Err(UnexEmptyInputError);
         }
 
         // 2. any(arg.total_elems == SIZE_ZERO) -> return None
         if args.clone().any(|m| m.total_elems == 0) {
-            return Some(UnexZeroElemError);
+            return Err(UnexZeroElemError);
         }
 
         // 3. compute max_rank, if skip_dims > max_rank -> return None
         let max_rank = args.clone().map(|m| m.shape.len()).max().unwrap(); // unwrap is fine because args_len != 0
         if skip_dims > max_rank {
-            return Some(SkipDimError);
+            return Err(SkipDimError);
         }
 
-        None
+        Ok(())
     }
 
     fn new<'a>(args: impl MetaIter<'a>, skip_dims: usize) -> TensorResult<Self> {
@@ -296,7 +306,7 @@ impl IterBuilder {
 
         let offsets = args.map(|m| m.offset).collect();
 
-        Ok(IterBuilder {
+        Ok(Self {
             out_shape,
             shapes,
             strides,
@@ -319,26 +329,28 @@ impl IterBuilder {
             .collect()
     }
 
-    fn swap_dims(&mut self, i: usize, j: usize) {
+    fn swap_dims(mut self, i: usize, j: usize) -> Self {
         self.out_shape.swap(i, j);
         self.shapes.iter_mut().for_each(|s| s.swap(i, j));
         self.strides.iter_mut().for_each(|s| s.swap(i, j));
+        self
     }
 
-    fn part(&mut self, target: DimType) {
+    fn part(mut self, target: DimType) -> Self {
         let mut j = 0;
         for i in 0..self.actual_rank {
             if self.out_shape[i] != target {
                 if i != j {
-                    self.swap_dims(i, j);
+                    self = self.swap_dims(i, j);
                 }
                 j += 1;
             }
         }
         self.actual_rank = j;
+        self
     }
 
-    fn zero_broadcasted_dims(&mut self) {
+    fn zero_broadcasted_dims(mut self) -> Self {
         self.shapes
             .iter_mut()
             .zip(self.strides.iter_mut())
@@ -349,28 +361,32 @@ impl IterBuilder {
                     }
                 }
             });
+
+        self
     }
 
-    fn sort_by_stride_of<const I: usize>(&mut self) {
+    fn sort_by_stride_of<const N: usize>(mut self) -> Self {
         let mut perm: SmallSlice<_> = (0..self.actual_rank).collect();
         perm.sort_unstable_by_key(|&i| {
-            Reverse(if self.strides[I][i] == SIZE_ZERO {
+            Reverse(if self.strides[N][i] == SIZE_ZERO {
                 usize::MAX
             } else {
-                self.strides[I][i]
+                self.strides[N][i]
             })
         });
 
         for i in 0..self.actual_rank {
             while perm[i] != i {
-                self.swap_dims(i, perm[i]);
+                self = self.swap_dims(i, perm[i]);
                 let new_pos = perm[i];
                 perm.swap(i, new_pos);
             }
         }
+
+        self
     }
 
-    fn coalesce_dims(&mut self) {
+    fn coalesce_dims(mut self) -> Self {
         for i in (0..self.actual_rank.saturating_sub(1)).rev() {
             let all_agree = !self
                 .shapes
@@ -390,10 +406,10 @@ impl IterBuilder {
             }
         }
 
-        self.part(DIM_ZERO);
+        self.part(DIM_ZERO)
     }
 
-    fn shrink_to_fit(&mut self) {
+    fn shrink_to_fit(mut self) -> Self {
         fn drop_ext_dims<T>(vec: &mut SmallSlice<T>, len: usize) {
             vec.truncate(len);
             vec.shrink_to_fit();
@@ -404,6 +420,7 @@ impl IterBuilder {
             drop_ext_dims(&mut self.strides[i], self.actual_rank);
         }
         drop_ext_dims(&mut self.out_shape, self.actual_rank);
+        self
     }
 
     fn build(mut self) -> TensorIter {

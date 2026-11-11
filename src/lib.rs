@@ -3,7 +3,7 @@ pub mod broadcast;
 pub mod consts;
 pub mod error;
 pub mod iterator;
-mod math;
+pub mod math;
 pub mod tensor;
 mod types;
 
