@@ -10,7 +10,6 @@ use crate::tensor::TensorMeta;
 
 use Op::{Add, Mul, Sub};
 
-#[derive(Clone)]
 pub(crate) struct BinaryOp<T: TensorFType> {
     input: [Rc<Expr<T>>; 2],
     it: RefCell<TensorIter>,

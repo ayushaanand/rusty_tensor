@@ -7,7 +7,6 @@ use crate::tensor::TensorMeta;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Clone)]
 pub(crate) struct MatMulOp<T: TensorFType> {
     a: Rc<Expr<T>>,
     b: Rc<Expr<T>>,

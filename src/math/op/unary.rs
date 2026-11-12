@@ -7,7 +7,6 @@ use crate::math::op::Op;
 use crate::math::{Expr, Storage};
 use crate::tensor::TensorMeta;
 
-#[derive(Clone)]
 pub(crate) struct UnaryOp<T: TensorFType> {
     input: Rc<Expr<T>>,
     it: RefCell<TensorIter>,

@@ -5,7 +5,6 @@ use crate::error::RangeError;
 use crate::math::{Expr, op::Op};
 use crate::tensor::TensorMeta;
 
-#[derive(Clone)]
 pub(crate) struct ViewOp<T: TensorFType> {
     input: Rc<Expr<T>>,
 }

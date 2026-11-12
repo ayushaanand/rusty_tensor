@@ -4,10 +4,9 @@ use crate::math::Expr;
 use crate::math::op::Op;
 use std::rc::Rc;
 
-#[derive(Clone)]
 pub(crate) struct ApplyOp<T: TensorFType> {
     unary: UnaryOp<T>,
-    apply: Rc<dyn ApplyTrait<T>>,
+    apply: Box<dyn ApplyTrait<T>>,
 }
 
 trait ApplyTrait<T: TensorFType> {
@@ -43,7 +42,7 @@ where
     F: Fn(T) -> T + 'static,
     FDash: Fn(T) -> T + 'static,
 {
-    let apply = Rc::new(ApplyFunctions {
+    let apply = Box::new(ApplyFunctions {
         f,
         f_dash: input.requires_grad().then(|| f_dash),
     });

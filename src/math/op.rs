@@ -13,7 +13,6 @@ use matmul::MatMulOp;
 use unary::UnaryOp;
 use view::ViewOp;
 
-#[derive(Clone)]
 pub(crate) enum Op<T: TensorFType> {
     Ident(IdentOp),
 

@@ -4,7 +4,6 @@ use crate::tensor::Tensor;
 
 use std::rc::Rc;
 
-#[derive(Clone)]
 pub(crate) struct IdentOp;
 
 pub fn ident<T: TensorFType>(input: Tensor<T>, requires_grad: bool) -> Rc<Expr<T>> {

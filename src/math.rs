@@ -8,7 +8,6 @@ pub mod op;
 use op::Op;
 
 // ------- Storage -----------------------------------------------------------------
-#[derive(Clone)]
 struct Storage<T> {
     data: RefCell<Box<[T]>>,
     grad: Option<RefCell<Box<[T]>>>,
@@ -32,7 +31,6 @@ impl<T: TensorDType> Storage<T> {
 }
 
 // ------- Expr ----------------------------------------------------------------
-#[derive(Clone)]
 pub struct Expr<T: TensorFType> {
     meta: TensorMeta,
     storage: Rc<Storage<T>>,
