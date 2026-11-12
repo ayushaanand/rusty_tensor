@@ -1,5 +1,5 @@
 pub mod binary;
-pub mod custom_unary;
+pub mod apply;
 pub mod ident;
 pub mod matmul;
 pub mod unary;
@@ -7,7 +7,7 @@ pub mod view;
 
 use crate::consts::TensorFType;
 use binary::BinaryOp;
-use custom_unary::CustomUnaryOp;
+use apply::ApplyOp;
 use ident::IdentOp;
 use matmul::MatMulOp;
 use unary::UnaryOp;
@@ -26,7 +26,7 @@ pub(crate) enum Op<T: TensorFType> {
     Sigmoid(UnaryOp<T>),
     Softplus(UnaryOp<T>),
 
-    Apply(CustomUnaryOp<T>),
+    Apply(ApplyOp<T>),
 
     MatMul(MatMulOp<T>),
 
