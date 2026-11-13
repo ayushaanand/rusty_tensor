@@ -152,6 +152,10 @@ impl<T: TensorFType> BinaryOp<T> {
     pub fn mul_bwd(&self, grad: &[T]) {
         self.bwd_unified(grad, |g, d2| g * d2, |g, d1| g * d1)
     }
+
+    pub fn inputs(&self) -> &[Rc<Expr<T>>] {
+        &self.input
+    }
 }
 
 #[cfg(test)]

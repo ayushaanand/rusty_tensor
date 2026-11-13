@@ -1,13 +1,16 @@
-pub mod binary;
 pub mod apply;
+pub mod binary;
 pub mod ident;
 pub mod matmul;
 pub mod unary;
 pub mod view;
 
 use crate::consts::TensorFType;
-use binary::BinaryOp;
+use std::rc::Rc;
+use super::Expr;
+
 use apply::ApplyOp;
+use binary::BinaryOp;
 use ident::IdentOp;
 use matmul::MatMulOp;
 use unary::UnaryOp;
@@ -35,8 +38,6 @@ pub(crate) enum Op<T: TensorFType> {
 
 impl<T: TensorFType> Op<T> {
     pub fn fwd(&self, out: &mut [T]) {
-        let zero = T::zero();
-        let one = T::one();
         match self {
             Op::Ident(_) => {}
 
@@ -76,6 +77,23 @@ impl<T: TensorFType> Op<T> {
             Op::MatMul(op) => op.bwd(grad),
 
             Op::Transpose(_) | Op::Slice(_) => {}
+        }
+    }
+
+    pub fn inputs(&self) -> &[Rc<Expr<T>>] {
+        match self {
+            Op::Ident(_) => &[],
+
+            Op::Add(op) | Op::Sub(op) | Op::Mul(op) => op.inputs(),
+
+            // Z = f(A)
+            Op::ReLu(op) | Op::SiLu(op) | Op::Sigmoid(op) | Op::Softplus(op) => op.inputs(),
+
+            Op::Apply(op) => op.inputs(),
+
+            Op::MatMul(op) => op.inputs(),
+
+            Op::Transpose(op) | Op::Slice(op) => op.inputs(),
         }
     }
 }

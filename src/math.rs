@@ -5,6 +5,7 @@ use crate::consts::*;
 use crate::tensor::TensorMeta;
 
 pub mod op;
+pub mod graph;
 use op::Op;
 
 // ------- Storage -----------------------------------------------------------------
@@ -49,6 +50,10 @@ impl<T: TensorFType> Expr<T> {
     /// Panics if expr.[`requires_grad()`](requires_grad) == false
     fn get_grad(&self) -> &RefCell<Box<[T]>> {
         self.storage.grad.as_ref().unwrap()
+    }
+
+    pub(crate) fn inputs(&self) -> &[Rc<Expr<T>>] {
+        self.op.inputs()
     }
 }
 

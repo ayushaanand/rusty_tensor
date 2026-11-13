@@ -1,15 +1,15 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::broadcast::compute_broadcast_shape_const;
 use crate::consts::{SizeType, TensorFType, TensorResult};
 use crate::error::MatmulShapeError;
 use crate::iterator::TensorIter;
 use crate::math::{Expr, Storage, op};
 use crate::tensor::TensorMeta;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 pub(crate) struct MatMulOp<T: TensorFType> {
-    a: Rc<Expr<T>>,
-    b: Rc<Expr<T>>,
+    input: [Rc<Expr<T>>; 2],
     it: RefCell<TensorIter>,
 
     // m*p @ p*n  (m, p, n)
@@ -47,8 +47,7 @@ pub fn mm<T: TensorFType>(a: &Rc<Expr<T>>, b: &Rc<Expr<T>>) -> TensorResult<Rc<E
 
     let mat_dims = (m, p, n);
     let op = op::Op::MatMul(MatMulOp {
-        a: Rc::clone(a),
-        b: Rc::clone(b),
+        input: inputs.map(Rc::clone),
         it,
         mat_dims,
     });
@@ -71,8 +70,8 @@ impl<T: TensorFType> MatMulOp<T> {
             *arg.meta.stride.last_chunk::<2>().unwrap()
         }
 
-        let inner_a_strides = inner_strides(&self.a);
-        let inner_b_strides = inner_strides(&self.b);
+        let inner_a_strides = inner_strides(&self.input[0]);
+        let inner_b_strides = inner_strides(&self.input[1]);
 
         self.it.borrow_mut().for_each(|pos| {
             let (r_offset, a_offset, b_offset) = (pos[0], pos[1], pos[2]);
@@ -96,8 +95,8 @@ impl<T: TensorFType> MatMulOp<T> {
     }
 
     pub(crate) fn fwd(&self, out: &mut [T]) {
-        let a_data = self.a.storage.data.borrow();
-        let b_data = self.b.storage.data.borrow();
+        let a_data = self.input[0].storage.data.borrow();
+        let b_data = self.input[1].storage.data.borrow();
 
         self.mm_loop(|r_idx, a_idx, b_idx| {
             out[r_idx] += a_data[a_idx] * b_data[b_idx];
@@ -108,11 +107,11 @@ impl<T: TensorFType> MatMulOp<T> {
         // Rc::ptr_eq on expr branch is removed since uniform indexing optimization is not possible in matmul
         // write must be done through both indices, which is done in grad aliased case anyway
 
-        if Rc::ptr_eq(&self.a.storage, &self.b.storage) {
+        if Rc::ptr_eq(&self.input[0].storage, &self.input[1].storage) {
             // grads are shared, but uniform indexing not possible due to view changes
-            if let Some(parent_grad) = &self.a.storage.grad {
+            if let Some(parent_grad) = &self.input[0].storage.grad {
                 let parent_grad = &mut *parent_grad.borrow_mut();
-                let parent_data = &*self.a.storage.data.borrow();
+                let parent_data = &*self.input[0].storage.data.borrow();
                 self.mm_loop(|r_idx, a_idx, b_idx| {
                     parent_grad[a_idx] += grad[r_idx] * parent_data[b_idx];
                     parent_grad[b_idx] += parent_data[a_idx] * grad[r_idx];
@@ -120,11 +119,11 @@ impl<T: TensorFType> MatMulOp<T> {
             } else { /* unreachable!() */
             }
         } else {
-            let a_data = &*self.a.storage.data.borrow();
-            let b_data = &*self.b.storage.data.borrow();
+            let a_data = &*self.input[0].storage.data.borrow();
+            let b_data = &*self.input[1].storage.data.borrow();
 
             // different parents, one may not require grad
-            match [&self.a.storage.grad, &self.b.storage.grad] {
+            match [&self.input[0].storage.grad, &self.input[1].storage.grad] {
                 [Some(a_grad), Some(b_grad)] => {
                     // separate grads, borrow_mut and index separately
                     let a_grad = &mut *a_grad.borrow_mut();
@@ -152,6 +151,10 @@ impl<T: TensorFType> MatMulOp<T> {
             }
         }
     }
+
+    pub(super) fn inputs(&self) -> &[Rc<Expr<T>>] {
+        &self.input
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +169,7 @@ mod tests {
         ($left:expr, $right:expr) => {
             assert_allclose!($left, $right, 1e-6, 1e-6);
         };
-        ($left:expr, $right:expr, $atol:expr, $rtol:expr) => {{
+        ($left:expr, $right:expr, $atol:expr, $rtol:expr) => {
             assert_eq!(
                 $left.len(),
                 $right.len(),
@@ -187,7 +190,7 @@ mod tests {
                     tol
                 );
             }
-        }};
+        };
     }
 
     fn repeat_slice<T: Copy>(slice: &[T], n: usize) -> Vec<T> {

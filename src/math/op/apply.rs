@@ -20,7 +20,7 @@ struct ApplyFunctions<F, FDash> {
 }
 
 impl<T: TensorFType, F, FDash> ApplyTrait<T> for ApplyFunctions<F, FDash>
-where 
+where
     F: Fn(T) -> T,
     FDash: Fn(T) -> T,
 {
@@ -31,13 +31,16 @@ where
     fn bwd(&self, unary: &UnaryOp<T>, grad: &[T]) {
         if let Some(f_dash) = &self.f_dash {
             unary.bwd_singular(grad, |a| f_dash(a))
+        } else { /* unreachable!() */
         }
-        else { /* unreachable!() */ }
     }
-}  
+}
 
-pub fn apply<T: TensorFType, F, FDash>(input: &Rc<Expr<T>>, f: F, f_dash: FDash,
-) -> TensorResult<Rc<Expr<T>>> 
+pub fn apply<T: TensorFType, F, FDash>(
+    input: &Rc<Expr<T>>,
+    f: F,
+    f_dash: FDash,
+) -> TensorResult<Rc<Expr<T>>>
 where
     F: Fn(T) -> T + 'static,
     FDash: Fn(T) -> T + 'static,
@@ -46,7 +49,7 @@ where
         f,
         f_dash: input.requires_grad().then(|| f_dash),
     });
-    
+
     build_unary_op(input, |unary| {
         Op::Apply(ApplyOp {
             input: unary,
@@ -63,20 +66,23 @@ impl<T: TensorFType> ApplyOp<T> {
     pub(super) fn bwd(&self, grad: &[T]) {
         self.apply.bwd(&self.input, grad);
     }
-}
 
+    pub(super) fn inputs(&self) -> &[Rc<Expr<T>>] {
+        self.input.inputs()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::op::ident::ident; 
+    use crate::math::op::ident::ident;
     use crate::tensor::Tensor;
-    
+
     #[test]
     fn test_apply_exp() {
         let input: [f32; _] = [0.1, 0.2, 0.3, 0.4];
         let input_exp = input.map(|x| x.exp());
-        
+
         let e1 = ident(Tensor::from_buf(&[2, 2], input).unwrap(), true);
 
         let e2 = apply(&e1, f32::exp, f32::exp).unwrap();
