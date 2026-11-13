@@ -44,10 +44,10 @@ impl<T: TensorFType> Op<T> {
             Op::Sub(op) => op.fwd(out, |a, b| a - b),
             Op::Mul(op) => op.fwd(out, |a, b| a * b),
 
-            Op::ReLu(op) => op.fwd(out, |x| T::max(x, zero)),
-            Op::SiLu(op) => op.fwd(out, |x| x / (one + T::exp(-x))),
-            Op::Sigmoid(op) => op.fwd(out, |x| one / (one + T::exp(-x))),
-            Op::Softplus(op) => op.fwd(out, |x| T::ln(one + T::exp(x))),
+            Op::ReLu(op) => op.fwd(out, unary::fwd_functions::relu),
+            Op::SiLu(op) => op.fwd(out, unary::fwd_functions::silu),
+            Op::Sigmoid(op) => op.fwd(out, unary::fwd_functions::sigmoid),
+            Op::Softplus(op) => op.fwd(out, unary::fwd_functions::softplus),
 
             Op::Apply(op) => op.fwd(out),
 
@@ -58,8 +58,6 @@ impl<T: TensorFType> Op<T> {
     }
 
     pub fn bwd(&self, grad: &[T], out_val: &[T]) {
-        let zero = T::zero();
-        let one = T::one();
         match self {
             Op::Ident(_) => {}
 
@@ -68,15 +66,12 @@ impl<T: TensorFType> Op<T> {
             Op::Mul(op) => op.mul_bwd(grad),
 
             // Z = f(A)
-            Op::ReLu(op) => op.bwd(grad, out_val, |z, _| if z > zero { one } else { zero }),
-            Op::SiLu(op) => op.bwd(grad, out_val, |z, a|
-                // f'f-1(a) = sigmoid + a(sigmoid - sigmoid^2) = z(1 + (1-z)/a) or 1/2 if a == 0
-                if a == zero { one / (one + one) } else { z * (one + (one - z) / a) }
-            ),
-            Op::Sigmoid(op) => op.bwd(grad, out_val, |z, _| z * (one - z)),
-            Op::Softplus(op) => op.bwd(grad, out_val, |z, _| one - T::exp(-z)),
+            Op::ReLu(op) => op.bwd(grad, out_val, unary::bwd_functions::relu),
+            Op::SiLu(op) => op.bwd(grad, out_val, unary::bwd_functions::silu),
+            Op::Sigmoid(op) => op.bwd(grad, out_val, unary::bwd_functions::sigmoid),
+            Op::Softplus(op) => op.bwd(grad, out_val, unary::bwd_functions::softplus),
 
-            Op::Apply(op) => op.bwd(grad, out_val),
+            Op::Apply(op) => op.bwd(grad),
 
             Op::MatMul(op) => op.bwd(grad),
 

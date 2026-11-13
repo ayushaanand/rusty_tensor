@@ -68,6 +68,60 @@ impl<T: TensorFType> UnaryOp<T> {
         } else { /* unreachable!() */
         }
     }
+
+    pub(super) fn bwd_singular<F: Fn(T) -> T>(&self, grad: &[T], f: F) {
+        let parent_data = self.input.storage.data.borrow();
+        if let Some(parent_grad) = &self.input.storage.grad {
+            let parent_grad = &mut *parent_grad.borrow_mut();
+
+            self.it.borrow_mut().for_each(|pos| {
+                parent_grad[pos[1]] += grad[pos[0]] * f(parent_data[pos[1]]);
+            });
+        } else { /* unreachable!() */
+        }
+    }
+}
+
+pub(super) mod fwd_functions {
+    use crate::consts::TensorFType;
+
+    pub(in crate::math::op) fn relu<T: TensorFType>(x: T) -> T {
+        T::max(x, T::zero())
+    }
+    
+    pub(in crate::math::op) fn silu<T: TensorFType>(x: T) -> T {
+        x / (T::one() + T::exp(-x))
+    }
+    
+    pub(in crate::math::op) fn sigmoid<T: TensorFType>(x: T) -> T {
+        T::one() / (T::one() + T::exp(-x))
+    }
+    
+    pub(in crate::math::op) fn softplus<T: TensorFType>(x: T) -> T {
+        T::ln(T::one() + T::exp(x))
+    }
+}
+
+pub(super) mod bwd_functions {
+    use crate::consts::TensorFType;
+    
+    pub(in crate::math::op) fn relu<T: TensorFType>(z: T, _: T) ->  T {
+        if z > T::zero() { T::one() } else { T::zero() } 
+    }
+    
+    pub(in crate::math::op) fn silu<T: TensorFType>(z: T, a: T) -> T {
+        // f'f-1(a) = sigmoid + a(sigmoid - sigmoid^2) = z(1 + (1-z)/a) or 1/2 if a == 0
+        let zero = T::zero(); let one = T::one();
+        if a == zero { one / (one + one) } else { z * (one + (one - z) / a) }
+    }
+    
+    pub(in crate::math::op) fn sigmoid<T: TensorFType>(z: T, _: T) -> T {
+        z * (T::one() - z)
+    }
+    
+    pub(in crate::math::op) fn softplus<T: TensorFType>(z: T, _: T) -> T {
+        T::one() - T::exp(-z) 
+    }
 }
 
 #[cfg(test)]

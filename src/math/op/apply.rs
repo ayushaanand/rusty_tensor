@@ -5,13 +5,13 @@ use crate::math::op::Op;
 use std::rc::Rc;
 
 pub(crate) struct ApplyOp<T: TensorFType> {
-    unary: UnaryOp<T>,
+    input: UnaryOp<T>,
     apply: Box<dyn ApplyTrait<T>>,
 }
 
 trait ApplyTrait<T: TensorFType> {
     fn fwd(&self, unary: &UnaryOp<T>, out: &mut [T]);
-    fn bwd(&self, unary: &UnaryOp<T>, grad: &[T], out_val: &[T]);
+    fn bwd(&self, unary: &UnaryOp<T>, grad: &[T]);
 }
 
 struct ApplyFunctions<F, FDash> {
@@ -28,15 +28,15 @@ where
         unary.fwd(out, |x| (self.f)(x));
     }
 
-    fn bwd(&self, unary: &UnaryOp<T>, grad: &[T], out_val: &[T]) {
+    fn bwd(&self, unary: &UnaryOp<T>, grad: &[T]) {
         if let Some(f_dash) = &self.f_dash {
-            unary.bwd(grad, out_val, |_, a| f_dash(a))
+            unary.bwd_singular(grad, |a| f_dash(a))
         }
         else { /* unreachable!() */ }
     }
 }  
 
-fn apply<T: TensorFType, F, FDash>(input: &Rc<Expr<T>>, f: F, f_dash: FDash,
+pub fn apply<T: TensorFType, F, FDash>(input: &Rc<Expr<T>>, f: F, f_dash: FDash,
 ) -> TensorResult<Rc<Expr<T>>> 
 where
     F: Fn(T) -> T + 'static,
@@ -49,7 +49,7 @@ where
     
     build_unary_op(input, |unary| {
         Op::Apply(ApplyOp {
-            unary,
+            input: unary,
             apply,
         })
     })
@@ -57,11 +57,11 @@ where
 
 impl<T: TensorFType> ApplyOp<T> {
     pub(super) fn fwd(&self, out: &mut [T]) {
-        self.apply.fwd(&self.unary, out);
+        self.apply.fwd(&self.input, out);
     }
 
-    pub(super) fn bwd(&self, grad: &[T], out_val: &[T]) {
-        self.apply.bwd(&self.unary, grad, out_val);
+    pub(super) fn bwd(&self, grad: &[T]) {
+        self.apply.bwd(&self.input, grad);
     }
 }
 
