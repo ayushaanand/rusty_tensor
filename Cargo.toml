@@ -9,9 +9,8 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 num-traits = "0.2"
-smallvec = "1.15.2"
-itertools = "0.15.0"
-pyo3 = {  version = "0.29.0", features = ["extension-module"], optional = true }
+smallvec = "1.16.4"
+pyo3 = {  version = "0.30.1", features = ["extension-module"], optional = true }
 
 [features]
 python-testing = ["dep:pyo3"]
