@@ -5,7 +5,7 @@ use crate::math::op::Op;
 use std::rc::Rc;
 
 pub(crate) struct ApplyOp<T: TensorFType> {
-    input: UnaryOp<T>,
+    unary: UnaryOp<T>,
     apply: Box<dyn ApplyTrait<T>>,
 }
 
@@ -30,7 +30,7 @@ where
 
     fn bwd(&self, unary: &UnaryOp<T>, grad: &[T]) {
         if let Some(f_dash) = &self.f_dash {
-            unary.bwd_singular(grad, |a| f_dash(a))
+            unary.bwd_singular(grad, f_dash)
         } else { /* unreachable!() */
         }
     }
@@ -47,28 +47,23 @@ where
 {
     let apply = Box::new(ApplyFunctions {
         f,
-        f_dash: input.requires_grad().then(|| f_dash),
+        f_dash: input.requires_grad().then_some(f_dash),
     });
 
-    build_unary_op(input, |unary| {
-        Op::Apply(ApplyOp {
-            input: unary,
-            apply,
-        })
-    })
+    build_unary_op(input, |unary| Op::Apply(ApplyOp { unary, apply }))
 }
 
 impl<T: TensorFType> ApplyOp<T> {
     pub(super) fn fwd(&self, out: &mut [T]) {
-        self.apply.fwd(&self.input, out);
+        self.apply.fwd(&self.unary, out);
     }
 
     pub(super) fn bwd(&self, grad: &[T]) {
-        self.apply.bwd(&self.input, grad);
+        self.apply.bwd(&self.unary, grad);
     }
 
     pub(super) fn inputs(&self) -> &[Rc<Expr<T>>] {
-        self.input.inputs()
+        self.unary.inputs()
     }
 }
 

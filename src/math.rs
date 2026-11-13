@@ -4,8 +4,8 @@ use std::rc::Rc;
 use crate::consts::*;
 use crate::tensor::TensorMeta;
 
-pub mod op;
 pub mod graph;
+pub mod op;
 use op::Op;
 
 // ------- Storage -----------------------------------------------------------------
@@ -59,7 +59,11 @@ impl<T: TensorFType> Expr<T> {
 
 impl<T: TensorFType> Expr<T> {
     pub fn eval_fwd(&self) {
-        self.op.fwd(&mut self.storage.data.borrow_mut());
+        let data = &mut **self.storage.data.borrow_mut();
+        if self.op.needs_zeroed_data() {
+            data.fill(T::zero());
+        }
+        self.op.fwd(data);
     }
 
     pub fn eval_bwd(&self) {
@@ -70,5 +74,14 @@ impl<T: TensorFType> Expr<T> {
         // TODO: expr requires_grad, ie one parent must require too (if expr not ident)
         //       may be optimizable
         self.op.bwd(&grad.borrow(), &self.storage.data.borrow());
+    }
+
+    pub(crate) fn fill_grad_with(&self, val: T) {
+        if !self.op.is_view()
+            && let Some(grad) = &self.storage.grad
+        {
+            let grad = &mut **grad.borrow_mut();
+            grad.fill(val);
+        }
     }
 }

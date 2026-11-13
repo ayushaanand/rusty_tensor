@@ -5,9 +5,9 @@ pub mod matmul;
 pub mod unary;
 pub mod view;
 
+use super::Expr;
 use crate::consts::TensorFType;
 use std::rc::Rc;
-use super::Expr;
 
 use apply::ApplyOp;
 use binary::BinaryOp;
@@ -95,5 +95,13 @@ impl<T: TensorFType> Op<T> {
 
             Op::Transpose(op) | Op::Slice(op) => op.inputs(),
         }
+    }
+
+    pub fn needs_zeroed_data(&self) -> bool {
+        !matches!(self, Op::Ident(_) | Op::Transpose(_) | Op::Slice(_))
+    }
+
+    pub fn is_view(&self) -> bool {
+        matches!(self, Op::Transpose(_) | Op::Slice(_))
     }
 }

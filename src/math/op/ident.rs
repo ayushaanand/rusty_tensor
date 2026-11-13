@@ -13,3 +13,11 @@ pub fn ident<T: TensorFType>(input: Tensor<T>, requires_grad: bool) -> Rc<Expr<T
         op: Op::Ident(IdentOp),
     })
 }
+
+pub fn ident_expr<T: TensorFType>(input: &Rc<Expr<T>>) -> Rc<Expr<T>> {
+    Rc::new(Expr {
+        meta: input.meta.clone(),
+        storage: input.storage.clone(),
+        op: Op::Ident(IdentOp),
+    })
+}

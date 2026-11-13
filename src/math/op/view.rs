@@ -5,7 +5,7 @@ use crate::error::RangeError;
 use crate::math::{Expr, op::Op};
 use crate::tensor::TensorMeta;
 
-pub(super) struct ViewOp<T: TensorFType> {
+pub(crate) struct ViewOp<T: TensorFType> {
     input: Rc<Expr<T>>,
 }
 
@@ -42,7 +42,6 @@ pub fn transpose<T: TensorFType>(
 
     build_view_op(input, new_meta, Op::Transpose)
 }
-
 
 // ------- Slicing ----------------------------------------------------
 pub enum SlicingRange {
